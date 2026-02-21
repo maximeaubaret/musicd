@@ -1,0 +1,28 @@
+{
+  "name": "jellyfin-music-daemon",
+  "version": "0.1.0",
+  "description": "A daemon that plays music from Jellyfin",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/server/index.ts",
+    "cli": "bun run src/cli/index.ts",
+    "format": "prettier --write .",
+    "lint": "eslint . --ext .ts"
+  },
+  "bin": {
+    "musicd": "./src/cli/index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.0.0",
+    "zod": "^3.22.4",
+    "commander": "^12.0.0",
+    "dotenv": "^16.4.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.9",
+    "@types/node": "^20.11.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.4",
+    "typescript": "^5.3.3"
+  }
+}
