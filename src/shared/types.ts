@@ -36,6 +36,7 @@ export interface JellyfinItem {
   Type: string;
   Artists?: string[];
   Album?: string;
+  AlbumArtist?: string;
   RunTimeTicks?: number;
   MediaSources?: MediaSource[];
 }
@@ -48,7 +49,7 @@ export interface MediaSource {
 }
 
 // Playback types
-export type PlaybackState = 'playing' | 'stopped';
+export type PlaybackState = "playing" | "stopped";
 
 export interface PlaybackStatus {
   state: PlaybackState;
@@ -72,7 +73,7 @@ export interface PlayRequest {
 }
 
 export interface HealthResponse {
-  status: 'healthy' | 'unhealthy';
+  status: "healthy" | "unhealthy";
   daemon: {
     uptime: number;
     version: string;
@@ -85,22 +86,25 @@ export interface HealthResponse {
 
 // Error types
 export class JellyfinError extends Error {
-  constructor(message: string, public statusCode?: number) {
+  constructor(
+    message: string,
+    public statusCode?: number,
+  ) {
     super(message);
-    this.name = 'JellyfinError';
+    this.name = "JellyfinError";
   }
 }
 
 export class PlayerError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'PlayerError';
+    this.name = "PlayerError";
   }
 }
 
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'ConfigError';
+    this.name = "ConfigError";
   }
 }

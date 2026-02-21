@@ -1,26 +1,26 @@
-import { Hono } from 'hono';
-import { z } from 'zod';
-import type { JellyfinService } from '../services/jellyfin.js';
-import type { PlayerService } from '../services/player.js';
-import type { PlayRequest, HealthResponse } from '../../shared/types.js';
-import { JellyfinError, PlayerError } from '../../shared/types.js';
-import { APP_VERSION } from '../../shared/constants.js';
+import { Hono } from "hono";
+import { z } from "zod";
+import type { JellyfinService } from "../services/jellyfin.js";
+import type { PlayerService } from "../services/player.js";
+import type { PlayRequest, HealthResponse } from "../../shared/types.js";
+import { JellyfinError, PlayerError } from "../../shared/types.js";
+import { APP_VERSION } from "../../shared/constants.js";
 
 const PlayRequestSchema = z.object({
-  itemId: z.string().min(1, 'Item ID is required'),
+  itemId: z.string().min(1, "Item ID is required"),
 });
 
 export function createApiRoutes(
   jellyfinService: JellyfinService,
   playerService: PlayerService,
-  startTime: number
+  startTime: number,
 ) {
   const app = new Hono();
 
   /**
    * POST /api/play - Play a Jellyfin item
    */
-  app.post('/play', async (c) => {
+  app.post("/play", async (c) => {
     try {
       const body = await c.req.json();
       const { itemId } = PlayRequestSchema.parse(body);
@@ -36,7 +36,7 @@ export function createApiRoutes(
 
       return c.json({
         success: true,
-        message: 'Playback started',
+        message: "Playback started",
         item: {
           id: item.Id,
           name: item.Name,
@@ -49,10 +49,10 @@ export function createApiRoutes(
         return c.json(
           {
             success: false,
-            error: 'Invalid request',
+            error: "Invalid request",
             details: error.errors,
           },
-          400
+          400,
         );
       }
 
@@ -63,7 +63,7 @@ export function createApiRoutes(
             success: false,
             error: error.message,
           },
-          statusCode
+          statusCode,
         );
       }
 
@@ -73,17 +73,17 @@ export function createApiRoutes(
             success: false,
             error: error.message,
           },
-          500
+          500,
         );
       }
 
-      console.error('Unexpected error in /play:', error);
+      console.error("Unexpected error in /play:", error);
       return c.json(
         {
           success: false,
-          error: 'Internal server error',
+          error: "Internal server error",
         },
-        500
+        500,
       );
     }
   });
@@ -91,15 +91,15 @@ export function createApiRoutes(
   /**
    * POST /api/stop - Stop playback
    */
-  app.post('/stop', async (c) => {
+  app.post("/stop", async (c) => {
     try {
       if (!playerService.isPlaying()) {
         return c.json(
           {
             success: false,
-            error: 'No playback in progress',
+            error: "No playback in progress",
           },
-          400
+          400,
         );
       }
 
@@ -107,7 +107,7 @@ export function createApiRoutes(
 
       return c.json({
         success: true,
-        message: 'Playback stopped',
+        message: "Playback stopped",
       });
     } catch (error) {
       if (error instanceof PlayerError) {
@@ -116,17 +116,17 @@ export function createApiRoutes(
             success: false,
             error: error.message,
           },
-          500
+          500,
         );
       }
 
-      console.error('Unexpected error in /stop:', error);
+      console.error("Unexpected error in /stop:", error);
       return c.json(
         {
           success: false,
-          error: 'Internal server error',
+          error: "Internal server error",
         },
-        500
+        500,
       );
     }
   });
@@ -134,18 +134,18 @@ export function createApiRoutes(
   /**
    * GET /api/status - Get playback status
    */
-  app.get('/status', async (c) => {
+  app.get("/status", async (c) => {
     try {
       const status = await playerService.getStatus();
       return c.json(status);
     } catch (error) {
-      console.error('Error getting status:', error);
+      console.error("Error getting status:", error);
       return c.json(
         {
           success: false,
-          error: 'Failed to get status',
+          error: "Failed to get status",
         },
-        500
+        500,
       );
     }
   });
@@ -153,18 +153,18 @@ export function createApiRoutes(
   /**
    * GET /api/search - Search for music items
    */
-  app.get('/search', async (c) => {
+  app.get("/search", async (c) => {
     try {
-      const query = c.req.query('q');
-      const limitStr = c.req.query('limit');
-      
+      const query = c.req.query("q");
+      const limitStr = c.req.query("limit");
+
       if (!query) {
         return c.json(
           {
             success: false,
             error: 'Query parameter "q" is required',
           },
-          400
+          400,
         );
       }
 
@@ -173,9 +173,9 @@ export function createApiRoutes(
         return c.json(
           {
             success: false,
-            error: 'Limit must be between 1 and 100',
+            error: "Limit must be between 1 and 100",
           },
-          400
+          400,
         );
       }
 
@@ -188,9 +188,12 @@ export function createApiRoutes(
         results: results.map((item) => ({
           id: item.Id,
           name: item.Name,
-          artist: item.Artists?.[0],
+          type: item.Type,
+          artist: item.Artists?.[0] || item.AlbumArtist,
           album: item.Album,
-          duration: item.RunTimeTicks ? Math.floor(item.RunTimeTicks / 10000000) : 0,
+          duration: item.RunTimeTicks
+            ? Math.floor(item.RunTimeTicks / 10000000)
+            : 0,
         })),
       });
     } catch (error) {
@@ -201,17 +204,17 @@ export function createApiRoutes(
             success: false,
             error: error.message,
           },
-          statusCode
+          statusCode,
         );
       }
 
-      console.error('Error searching:', error);
+      console.error("Error searching:", error);
       return c.json(
         {
           success: false,
-          error: 'Search failed',
+          error: "Search failed",
         },
-        500
+        500,
       );
     }
   });
@@ -219,7 +222,7 @@ export function createApiRoutes(
   /**
    * GET /api/health - Check daemon health
    */
-  app.get('/health', async (c) => {
+  app.get("/health", async (c) => {
     try {
       const jellyfinConnected = await jellyfinService
         .verifyConnection()
@@ -227,26 +230,26 @@ export function createApiRoutes(
         .catch(() => false);
 
       const health: HealthResponse = {
-        status: jellyfinConnected ? 'healthy' : 'unhealthy',
+        status: jellyfinConnected ? "healthy" : "unhealthy",
         daemon: {
           uptime: Math.floor((Date.now() - startTime) / 1000),
           version: APP_VERSION,
         },
         jellyfin: {
           connected: jellyfinConnected,
-          serverUrl: jellyfinService['config'].serverUrl,
+          serverUrl: jellyfinService["config"].serverUrl,
         },
       };
 
       return c.json(health);
     } catch (error) {
-      console.error('Error checking health:', error);
+      console.error("Error checking health:", error);
       return c.json(
         {
-          status: 'unhealthy',
-          error: 'Health check failed',
+          status: "unhealthy",
+          error: "Health check failed",
         },
-        500
+        500,
       );
     }
   });
