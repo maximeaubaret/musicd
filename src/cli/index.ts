@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from 'commander';
 import chalk from 'chalk';
-import select from '@inquirer/select';
+import select from './select-with-quit.js';
 import { loadConfig } from '../shared/config.js';
 import type { PlaybackStatus, HealthResponse } from '../shared/types.js';
 import { runSetup } from './setup.js';
@@ -127,10 +127,13 @@ program
         selectedId = await select({
           message: 'Select a song to play:',
           choices,
-          theme: {
-            keybindings: ['vim'],
-          },
         });
+
+        // User quit with 'q'
+        if (selectedId === null) {
+          console.log(chalk.gray('Cancelled'));
+          process.exit(0);
+        }
       }
 
       // Play the selected item
