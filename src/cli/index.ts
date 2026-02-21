@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from 'commander';
 import chalk from 'chalk';
+import select from '@inquirer/select';
 import { loadConfig } from '../shared/config.js';
 import type { PlaybackStatus, HealthResponse } from '../shared/types.js';
 import { runSetup } from './setup.js';
@@ -73,22 +74,74 @@ program
 
 program
   .command('play')
-  .description('Play a Jellyfin item by ID')
-  .argument('<itemId>', 'Jellyfin item ID to play')
-  .action(async (itemId: string) => {
+  .description('Search and play music from Jellyfin library')
+  .argument('<query>', 'Search query (song name, artist, or album)')
+  .option('-l, --limit <number>', 'Maximum number of results to show', '20')
+  .action(async (query: string, options) => {
     try {
-      const result = await apiRequest('/play', 'POST', { itemId });
+      const limit = parseInt(options.limit, 10);
+      if (isNaN(limit) || limit < 1 || limit > 100) {
+        console.error(chalk.red('✗ Limit must be between 1 and 100'));
+        process.exit(1);
+      }
+
+      // Search for music
+      process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
+      const searchResult = await apiRequest(`/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+
+      if (searchResult.count === 0) {
+        console.log(chalk.yellow('✗ No results found'));
+        process.exit(1);
+      }
+
+      let selectedId: string;
+
+      // If only one result, auto-play it
+      if (searchResult.count === 1) {
+        const item = searchResult.results[0];
+        selectedId = item.id;
+        console.log(chalk.gray(`✓ Found 1 match`));
+      } else {
+        // Multiple results - show interactive selection
+        const choices = searchResult.results.map((item: any) => {
+          const parts = [chalk.bold.white(item.name)];
+          
+          if (item.artist) {
+            parts.push(chalk.cyan(item.artist));
+          }
+          
+          if (item.album) {
+            parts.push(chalk.blue(item.album));
+          }
+          
+          if (item.duration > 0) {
+            parts.push(chalk.gray(formatDuration(item.duration)));
+          }
+
+          return {
+            name: parts.join(' · '),
+            value: item.id,
+          };
+        });
+
+        selectedId = await select({
+          message: 'Select a song to play:',
+          choices,
+        });
+      }
+
+      // Play the selected item
+      const result = await apiRequest('/play', 'POST', { itemId: selectedId });
       
-      console.log('✓ Playback started');
-      console.log(`  Title: ${result.item.name}`);
+      console.log(chalk.green('▶ Playing:'), chalk.bold(result.item.name));
       if (result.item.artist) {
-        console.log(`  Artist: ${result.item.artist}`);
+        console.log(chalk.gray('  by'), chalk.cyan(result.item.artist));
       }
       if (result.item.album) {
-        console.log(`  Album: ${result.item.album}`);
+        console.log(chalk.gray('  from'), chalk.blue(result.item.album));
       }
     } catch (error) {
-      console.error('✗ Failed to play:', error instanceof Error ? error.message : error);
+      console.error(chalk.red('✗ Failed to play:'), error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
