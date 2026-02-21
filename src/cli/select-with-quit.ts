@@ -17,11 +17,11 @@ import {
   makeTheme,
   type Theme,
   type Status,
-} from '@inquirer/core';
-import { cursorHide } from '@inquirer/ansi';
-import type { PartialDeep } from '@inquirer/type';
-import { styleText } from 'node:util';
-import figures from '@inquirer/figures';
+} from "@inquirer/core";
+import { cursorHide } from "@inquirer/ansi";
+import type { PartialDeep } from "@inquirer/type";
+import { styleText } from "node:util";
+import figures from "@inquirer/figures";
 
 type SelectTheme = {
   icon: { cursor: string };
@@ -31,21 +31,24 @@ type SelectTheme = {
     keysHelpTip: (keys: [key: string, action: string][]) => string | undefined;
   };
   i18n: { disabledError: string };
-  indexMode: 'hidden' | 'number';
+  indexMode: "hidden" | "number";
 };
 
 const selectTheme: SelectTheme = {
   icon: { cursor: figures.pointer },
   style: {
-    disabled: (text: string) => styleText('dim', text),
-    description: (text: string) => styleText('cyan', text),
+    disabled: (text: string) => styleText("dim", text),
+    description: (text: string) => styleText("cyan", text),
     keysHelpTip: (keys: [string, string][]) =>
       keys
-        .map(([key, action]) => `${styleText('bold', key)} ${styleText('dim', action)}`)
-        .join(styleText('dim', ' • ')),
+        .map(
+          ([key, action]) =>
+            `${styleText("bold", key)} ${styleText("dim", action)}`,
+        )
+        .join(styleText("dim", " • ")),
   },
-  i18n: { disabledError: 'This option is disabled and cannot be selected.' },
-  indexMode: 'hidden',
+  i18n: { disabledError: "This option is disabled and cannot be selected." },
+  indexMode: "hidden",
 };
 
 type Choice<Value> = {
@@ -110,10 +113,13 @@ export default createPrompt(
   <Value>(config: SelectConfig<Value>, done: (value: Value | null) => void) => {
     const { loop = true, pageSize = 7 } = config;
     const theme = makeTheme<SelectTheme>(selectTheme, config.theme);
-    const [status, setStatus] = useState<Status>('idle');
+    const [status, setStatus] = useState<Status>("idle");
     const prefix = usePrefix({ status, theme });
 
-    const items = useMemo(() => normalizeChoices(config.choices), [config.choices]);
+    const items = useMemo(
+      () => normalizeChoices(config.choices),
+      [config.choices],
+    );
 
     const bounds = useMemo(() => {
       const first = items.findIndex(isNavigable);
@@ -121,7 +127,7 @@ export default createPrompt(
 
       if (first === -1) {
         throw new ValidationError(
-          '[select prompt] No selectable choices. All choices are disabled.',
+          "[select prompt] No selectable choices. All choices are disabled.",
         );
       }
 
@@ -129,8 +135,10 @@ export default createPrompt(
     }, [items]);
 
     const defaultItemIndex = useMemo(() => {
-      if (!('default' in config)) return -1;
-      return items.findIndex((item) => isSelectable(item) && item.value === config.default);
+      if (!("default" in config)) return -1;
+      return items.findIndex(
+        (item) => isSelectable(item) && item.value === config.default,
+      );
     }, [config.default, items]);
 
     const [active, setActive] = useState(
@@ -146,8 +154,8 @@ export default createPrompt(
       }
 
       // Handle 'q' to quit
-      if (key.name === 'q') {
-        setStatus('done');
+      if (key.name === "q") {
+        setStatus("done");
         done(null);
         return;
       }
@@ -156,20 +164,24 @@ export default createPrompt(
         if (selectedChoice.disabled) {
           setError(theme.i18n.disabledError);
         } else {
-          setStatus('done');
+          setStatus("done");
           done(selectedChoice.value);
         }
       } else if (
-        isUpKey(key, ['vim']) ||
-        isDownKey(key, ['vim']) ||
-        key.name === 'k' ||
-        key.name === 'j'
+        isUpKey(key, ["vim"]) ||
+        isDownKey(key, ["vim"]) ||
+        key.name === "k" ||
+        key.name === "j"
       ) {
         rl.clearLine(0);
-        const isUp = isUpKey(key, ['vim']) || key.name === 'k';
-        const isDown = isDownKey(key, ['vim']) || key.name === 'j';
+        const isUp = isUpKey(key, ["vim"]) || key.name === "k";
+        const isDown = isDownKey(key, ["vim"]) || key.name === "j";
 
-        if (loop || (isUp && active !== bounds.first) || (isDown && active !== bounds.last)) {
+        if (
+          loop ||
+          (isUp && active !== bounds.first) ||
+          (isDown && active !== bounds.last)
+        ) {
           const offset = isUp ? -1 : 1;
           let next = active;
           do {
@@ -183,9 +195,9 @@ export default createPrompt(
     const message = theme.style.message(config.message, status);
 
     const helpLine = theme.style.keysHelpTip([
-      ['↑↓/jk', 'navigate'],
-      ['⏎', 'select'],
-      ['q', 'quit'],
+      ["↑↓/jk", "navigate"],
+      ["⏎", "select"],
+      ["q", "quit"],
     ]);
 
     const page = usePagination({
@@ -196,13 +208,15 @@ export default createPrompt(
           return ` ${item.separator}`;
         }
 
-        const cursor = isActive ? theme.icon.cursor : ' ';
+        const cursor = isActive ? theme.icon.cursor : " ";
 
         if (item.disabled) {
           const disabledLabel =
-            typeof item.disabled === 'string' ? item.disabled : '(disabled)';
-          const disabledCursor = isActive ? theme.icon.cursor : '-';
-          return theme.style.disabled(`${disabledCursor} ${item.name} ${disabledLabel}`);
+            typeof item.disabled === "string" ? item.disabled : "(disabled)";
+          const disabledCursor = isActive ? theme.icon.cursor : "-";
+          return theme.style.disabled(
+            `${disabledCursor} ${item.name} ${disabledLabel}`,
+          );
         }
 
         const color = isActive ? theme.style.highlight : (x: string) => x;
@@ -212,26 +226,26 @@ export default createPrompt(
       loop,
     });
 
-    if (status === 'done') {
+    if (status === "done") {
       if (selectedChoice === null) {
-        return '';
+        return "";
       }
       return [prefix, message, theme.style.answer(selectedChoice.short)]
         .filter(Boolean)
-        .join(' ');
+        .join(" ");
     }
 
     const { description } = selectedChoice;
     const lines = [
-      [prefix, message].filter(Boolean).join(' '),
+      [prefix, message].filter(Boolean).join(" "),
       page,
-      ' ',
-      description ? theme.style.description(description) : '',
-      errorMsg ? theme.style.error(errorMsg) : '',
+      " ",
+      description ? theme.style.description(description) : "",
+      errorMsg ? theme.style.error(errorMsg) : "",
       helpLine,
     ]
       .filter(Boolean)
-      .join('\n')
+      .join("\n")
       .trimEnd();
 
     return `${lines}${cursorHide}`;

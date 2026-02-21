@@ -18,22 +18,26 @@ A TypeScript/Bun daemon that plays music from a Jellyfin server.
 ## Setup
 
 1. Install dependencies:
+
 ```bash
 bun install
 ```
 
 2. Configure Jellyfin server URL (optional):
+
 ```bash
 # Edit .env or config/default.json to set your Jellyfin server URL
 # Default is http://localhost:8096
 ```
 
 3. Run the setup wizard:
+
 ```bash
 bun run cli setup
 ```
 
 The setup wizard will:
+
 - Prompt for your Jellyfin username and password
 - Authenticate with your Jellyfin server
 - Save the authentication token securely to `.jellyfin-auth.json`
@@ -77,6 +81,7 @@ bun run cli health
 ### REST API
 
 - `POST /api/play` - Play a Jellyfin item
+
   ```json
   { "itemId": "abc123..." }
   ```

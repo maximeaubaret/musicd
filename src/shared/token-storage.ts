@@ -1,8 +1,8 @@
-import { existsSync, readFileSync, writeFileSync, chmodSync } from 'fs';
-import { join } from 'path';
-import type { AuthenticationResult } from './types.js';
+import { existsSync, readFileSync, writeFileSync, chmodSync } from "fs";
+import { join } from "path";
+import type { AuthenticationResult } from "./types.js";
 
-const TOKEN_FILE_PATH = join(process.cwd(), '.jellyfin-auth.json');
+const TOKEN_FILE_PATH = join(process.cwd(), ".jellyfin-auth.json");
 
 export interface StoredAuth {
   accessToken: string;
@@ -15,7 +15,10 @@ export interface StoredAuth {
 /**
  * Save authentication data to disk
  */
-export function saveAuth(authResult: AuthenticationResult, username: string): void {
+export function saveAuth(
+  authResult: AuthenticationResult,
+  username: string,
+): void {
   const data: StoredAuth = {
     accessToken: authResult.AccessToken,
     userId: authResult.User.Id,
@@ -25,7 +28,7 @@ export function saveAuth(authResult: AuthenticationResult, username: string): vo
   };
 
   try {
-    writeFileSync(TOKEN_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+    writeFileSync(TOKEN_FILE_PATH, JSON.stringify(data, null, 2), "utf-8");
     // Set file permissions to 600 (owner read/write only) for security
     chmodSync(TOKEN_FILE_PATH, 0o600);
   } catch (error) {
@@ -42,10 +45,10 @@ export function loadAuth(): StoredAuth | null {
   }
 
   try {
-    const data = readFileSync(TOKEN_FILE_PATH, 'utf-8');
+    const data = readFileSync(TOKEN_FILE_PATH, "utf-8");
     return JSON.parse(data) as StoredAuth;
   } catch (error) {
-    console.warn('Failed to load authentication data:', error);
+    console.warn("Failed to load authentication data:", error);
     return null;
   }
 }
@@ -63,11 +66,11 @@ export function hasAuth(): boolean {
 export function clearAuth(): void {
   if (existsSync(TOKEN_FILE_PATH)) {
     try {
-      writeFileSync(TOKEN_FILE_PATH, '', 'utf-8');
+      writeFileSync(TOKEN_FILE_PATH, "", "utf-8");
       // Alternatively, you could delete the file:
       // unlinkSync(TOKEN_FILE_PATH);
     } catch (error) {
-      console.warn('Failed to clear authentication data:', error);
+      console.warn("Failed to clear authentication data:", error);
     }
   }
 }
