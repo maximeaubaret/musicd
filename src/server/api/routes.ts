@@ -397,6 +397,112 @@ export function createApiRoutes(
   });
 
   /**
+   * POST /api/queue/remove/:index - Remove item from queue by index
+   */
+  app.post("/queue/remove/:index", async (c) => {
+    try {
+      const indexStr = c.req.param("index");
+      const index = parseInt(indexStr, 10);
+
+      if (isNaN(index)) {
+        return c.json(
+          {
+            success: false,
+            error: "Invalid index parameter",
+          },
+          400,
+        );
+      }
+
+      playerService.removeFromQueue(index);
+
+      return c.json({
+        success: true,
+        message: `Removed item at index ${index} from queue`,
+        queue: playerService.getQueue(),
+        position: playerService.getQueuePosition(),
+      });
+    } catch (error) {
+      if (error instanceof PlayerError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          400,
+        );
+      }
+
+      console.error("Unexpected error in /queue/remove:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Internal server error",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * POST /api/queue/play/:index - Play from specific queue position
+   */
+  app.post("/queue/play/:index", async (c) => {
+    try {
+      const indexStr = c.req.param("index");
+      const index = parseInt(indexStr, 10);
+
+      if (isNaN(index)) {
+        return c.json(
+          {
+            success: false,
+            error: "Invalid index parameter",
+          },
+          400,
+        );
+      }
+
+      await playerService.playFromQueue(index);
+
+      const queue = playerService.getQueue();
+      const item = queue[index];
+
+      return c.json({
+        success: true,
+        message: `Playing from queue position ${index + 1}`,
+        item: item
+          ? {
+              name: item.name,
+              artist: item.artist,
+              album: item.album,
+            }
+          : null,
+        position: index,
+        queueLength: queue.length,
+      });
+    } catch (error) {
+      if (error instanceof PlayerError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          400,
+        );
+      }
+
+      console.error("Unexpected error in /queue/play:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Internal server error",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
    * GET /api/search - Search for music items
    */
   app.get("/search", async (c) => {

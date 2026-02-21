@@ -1,4 +1,4 @@
-export const DEFAULT_DAEMON_PORT = 3000;
+export const DEFAULT_DAEMON_PORT = 8765;
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_AUDIO_DEVICE = "default";
 export const DEFAULT_JELLYFIN_URL = "http://localhost:8096";

@@ -14,7 +14,7 @@ try {
   const config = loadConfig();
   daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
 } catch (error) {
-  daemonUrl = "http://127.0.0.1:3000";
+  daemonUrl = "http://127.0.0.1:8765";
 }
 
 /**
@@ -387,7 +387,7 @@ program
 
 program
   .command("queue")
-  .description("Show current queue")
+  .description("Show queue - select a track to play it")
   .action(async () => {
     try {
       const result = await apiRequest("/queue");
@@ -397,38 +397,78 @@ program
         return;
       }
 
-      console.log(
-        chalk.gray(
-          `Queue (${result.count} track${result.count === 1 ? "" : "s"}):\n`,
-        ),
-      );
-
-      for (let i = 0; i < result.queue.length; i++) {
-        const item = result.queue[i];
-        const isCurrent = i === result.position;
-        const prefix = isCurrent ? chalk.green("▶") : " ";
+      // Build choices for each queue item
+      const choices = result.queue.map((item: any, index: number) => {
+        const isCurrent = index === result.position;
         const parts = [];
 
-        parts.push(chalk.gray(`${(i + 1).toString().padStart(2, " ")}.`));
+        // Current track indicator
+        const prefix = isCurrent ? chalk.green("▶") : " ";
+        parts.push(prefix);
+
+        // Track number
+        parts.push(chalk.gray(`${(index + 1).toString().padStart(2, " ")}.`));
+
+        // Track name
         parts.push(chalk.bold.white(item.name));
 
+        // Artist
         if (item.artist) {
           parts.push(chalk.cyan(item.artist));
         }
 
+        // Album
         if (item.album) {
           parts.push(chalk.blue(item.album));
         }
 
+        // Duration
         if (item.duration > 0) {
           parts.push(chalk.gray(formatDuration(item.duration)));
         }
 
-        console.log(`${prefix} ${parts.join(" · ")}`);
+        return {
+          name: parts.join(" · "),
+          value: index,
+        };
+      });
+
+      const selectedIndex = await select({
+        message: `Queue (${result.count} track${result.count === 1 ? "" : "s"}) - Select track to play:`,
+        choices,
+      });
+
+      // User quit with 'q'
+      if (selectedIndex === null) {
+        console.log(chalk.gray("Cancelled"));
+        return;
+      }
+
+      // Play from the selected queue position
+      try {
+        const playResult = await apiRequest(
+          `/queue/play/${selectedIndex}`,
+          "POST",
+        );
+        console.log(
+          chalk.green("▶ Playing:"),
+          chalk.bold(playResult.item.name),
+        );
+        console.log(
+          chalk.gray(
+            `  Queue: ${playResult.position + 1}/${playResult.queueLength}`,
+          ),
+        );
+      } catch (error) {
+        console.error(
+          chalk.red("✗ Failed to play:"),
+          error instanceof Error ? error.message : error,
+        );
+        process.exit(1);
       }
     } catch (error) {
       console.error(
-        chalk.red("✗ Failed to get queue:"),
+        chalk.red("✗ Queue error:"),
         error instanceof Error ? error.message : error,
       );
       process.exit(1);

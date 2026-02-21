@@ -189,6 +189,35 @@ export class PlayerService {
   }
 
   /**
+   * Remove an item from the queue by index
+   */
+  removeFromQueue(index: number): void {
+    if (index < 0 || index >= this.queue.length) {
+      throw new PlayerError("Invalid queue index");
+    }
+
+    // If removing the currently playing track, stop playback
+    if (index === this.queuePosition && this.isPlaying()) {
+      this.stop().catch((error) => {
+        console.error("Failed to stop playback:", error);
+      });
+    }
+
+    // Remove the item
+    this.queue.splice(index, 1);
+
+    // Adjust queue position if necessary
+    if (this.queuePosition >= index && this.queuePosition > 0) {
+      this.queuePosition--;
+    }
+
+    // If queue is now empty, reset position
+    if (this.queue.length === 0) {
+      this.queuePosition = -1;
+    }
+  }
+
+  /**
    * Stop playback
    */
   async stop(): Promise<void> {

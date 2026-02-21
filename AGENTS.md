@@ -88,7 +88,7 @@ bun run lint             # Lint TypeScript files with ESLint
 5. **camelCase** for variables, functions, and methods
 6. **UPPER_SNAKE_CASE** for constants:
    ```typescript
-   export const DEFAULT_DAEMON_PORT = 3000;
+   export const DEFAULT_DAEMON_PORT = 8765;
    ```
 
 ### File Organization

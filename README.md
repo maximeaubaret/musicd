@@ -52,7 +52,7 @@ The setup wizard will:
 bun run dev
 ```
 
-The daemon will start on `http://127.0.0.1:3000` by default.
+The daemon will start on `http://127.0.0.1:8765` by default.
 
 If you haven't run setup, the daemon will prompt you to do so.
 
@@ -97,7 +97,7 @@ bun run cli health
 Configuration is loaded from `config/default.json` and can be overridden with environment variables:
 
 - `JELLYFIN_URL` - Jellyfin server URL (default: http://localhost:8096)
-- `DAEMON_PORT` - Daemon HTTP port (default: 3000)
+- `DAEMON_PORT` - Daemon HTTP port (default: 8765)
 - `DAEMON_HOST` - Daemon bind address (default: 127.0.0.1)
 - `AUDIO_DEVICE` - Audio output device (default: "default")
 

@@ -82,15 +82,17 @@ async function main() {
     `✓ Server started at http://${config.daemon.host}:${config.daemon.port}`,
   );
   console.log("\nAPI Endpoints:");
-  console.log(`  POST /api/play          - Play a Jellyfin item`);
-  console.log(`  POST /api/stop          - Stop playback`);
-  console.log(`  GET  /api/status        - Get playback status`);
-  console.log(`  POST /api/queue/add     - Add items to queue`);
-  console.log(`  GET  /api/queue         - Get current queue`);
-  console.log(`  POST /api/queue/clear   - Clear queue`);
-  console.log(`  POST /api/queue/next    - Skip to next song`);
-  console.log(`  POST /api/queue/previous - Go to previous song`);
-  console.log(`  GET  /api/health        - Check daemon health`);
+  console.log(`  POST /api/play                - Play a Jellyfin item`);
+  console.log(`  POST /api/stop                - Stop playback`);
+  console.log(`  GET  /api/status              - Get playback status`);
+  console.log(`  POST /api/queue/add           - Add items to queue`);
+  console.log(`  GET  /api/queue               - Get current queue`);
+  console.log(`  POST /api/queue/clear         - Clear queue`);
+  console.log(`  POST /api/queue/next          - Skip to next song`);
+  console.log(`  POST /api/queue/previous      - Go to previous song`);
+  console.log(`  POST /api/queue/play/:index   - Play from queue position`);
+  console.log(`  POST /api/queue/remove/:index - Remove item from queue`);
+  console.log(`  GET  /api/health              - Check daemon health`);
   console.log("\nPress Ctrl+C to stop");
 
   // Graceful shutdown
