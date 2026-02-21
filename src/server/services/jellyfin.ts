@@ -152,6 +152,7 @@ export class JellyfinService {
 
   /**
    * Search for audio items in Jellyfin library
+   * Uses /Search/Hints endpoint which searches across track names, artists, and albums
    */
   async search(query: string, limit: number = 20): Promise<JellyfinItem[]> {
     // Ensure we're authenticated
@@ -161,15 +162,16 @@ export class JellyfinService {
 
     try {
       const params = new URLSearchParams({
-        SearchTerm: query,
-        IncludeItemTypes: 'Audio',
-        Recursive: 'true',
-        Limit: limit.toString(),
-        Fields: 'Artists,Album,RunTimeTicks',
+        searchTerm: query,
+        userId: this.userId!,
+        limit: limit.toString(),
+        includeItemTypes: 'Audio',
+        includeMedia: 'true',
+        includeArtists: 'false',
       });
 
       const response = await fetch(
-        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
+        `${this.config.serverUrl}/Search/Hints?${params}`,
         {
           headers: this.getHeaders(),
         }
@@ -187,7 +189,18 @@ export class JellyfinService {
       }
 
       const result = await response.json();
-      return (result.Items || []) as JellyfinItem[];
+      const searchHints = result.SearchHints || [];
+      
+      // Map SearchHint results to JellyfinItem format
+      return searchHints.map((hint: any) => ({
+        Id: hint.Id,
+        Name: hint.Name,
+        Type: hint.Type,
+        Artists: hint.Artists || [],
+        Album: hint.Album,
+        AlbumArtist: hint.AlbumArtist,
+        RunTimeTicks: hint.RunTimeTicks,
+      })) as JellyfinItem[];
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
