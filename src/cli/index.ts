@@ -135,11 +135,7 @@ program
       console.log(chalk.gray(`Found ${result.count} result${result.count === 1 ? '' : 's'}\n`));
 
       for (const item of result.results) {
-        const parts = [
-          chalk.dim(item.id),
-          '-',
-          chalk.bold.white(item.name),
-        ];
+        const parts = [chalk.bold.white(item.name)];
 
         if (item.artist) {
           parts.push(chalk.cyan(`by ${item.artist}`));
@@ -152,6 +148,8 @@ program
         if (item.duration > 0) {
           parts.push(chalk.gray(`(${formatDuration(item.duration)})`));
         }
+
+        parts.push(chalk.dim(`[${item.id}]`));
 
         console.log(parts.join(' '));
       }
