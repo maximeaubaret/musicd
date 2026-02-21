@@ -151,6 +151,72 @@ export function createApiRoutes(
   });
 
   /**
+   * GET /api/search - Search for music items
+   */
+  app.get('/search', async (c) => {
+    try {
+      const query = c.req.query('q');
+      const limitStr = c.req.query('limit');
+      
+      if (!query) {
+        return c.json(
+          {
+            success: false,
+            error: 'Query parameter "q" is required',
+          },
+          400
+        );
+      }
+
+      const limit = limitStr ? parseInt(limitStr, 10) : 20;
+      if (isNaN(limit) || limit < 1 || limit > 100) {
+        return c.json(
+          {
+            success: false,
+            error: 'Limit must be between 1 and 100',
+          },
+          400
+        );
+      }
+
+      const results = await jellyfinService.search(query, limit);
+
+      return c.json({
+        success: true,
+        query,
+        count: results.length,
+        results: results.map((item) => ({
+          id: item.Id,
+          name: item.Name,
+          artist: item.Artists?.[0],
+          album: item.Album,
+          duration: item.RunTimeTicks ? Math.floor(item.RunTimeTicks / 10000000) : 0,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 400 | 401;
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          statusCode
+        );
+      }
+
+      console.error('Error searching:', error);
+      return c.json(
+        {
+          success: false,
+          error: 'Search failed',
+        },
+        500
+      );
+    }
+  });
+
+  /**
    * GET /api/health - Check daemon health
    */
   app.get('/health', async (c) => {

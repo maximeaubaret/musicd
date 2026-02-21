@@ -106,6 +106,54 @@ program
   });
 
 program
+  .command('search')
+  .description('Search for music in Jellyfin library')
+  .argument('<query>', 'Search query (searches name, artist, and album)')
+  .option('-l, --limit <number>', 'Maximum number of results', '20')
+  .option('--json', 'Output results as JSON')
+  .action(async (query: string, options) => {
+    try {
+      const limit = parseInt(options.limit, 10);
+      if (isNaN(limit) || limit < 1 || limit > 100) {
+        console.error('✗ Limit must be between 1 and 100');
+        process.exit(1);
+      }
+
+      const result = await apiRequest(`/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      if (result.count === 0) {
+        console.log(`No results found for "${query}"`);
+        return;
+      }
+
+      console.log(`Found ${result.count} result${result.count === 1 ? '' : 's'} for "${query}":\n`);
+
+      for (const item of result.results) {
+        console.log(`${item.id}`);
+        console.log(`  ${item.name}`);
+        if (item.artist) {
+          console.log(`  by ${item.artist}`);
+        }
+        if (item.album) {
+          console.log(`  from ${item.album}`);
+        }
+        if (item.duration > 0) {
+          console.log(`  ${formatDuration(item.duration)}`);
+        }
+        console.log('');
+      }
+    } catch (error) {
+      console.error('✗ Search failed:', error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+
+program
   .command('status')
   .description('Show current playback status')
   .action(async () => {

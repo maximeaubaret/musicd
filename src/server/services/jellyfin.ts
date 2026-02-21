@@ -151,6 +151,52 @@ export class JellyfinService {
   }
 
   /**
+   * Search for audio items in Jellyfin library
+   */
+  async search(query: string, limit: number = 20): Promise<JellyfinItem[]> {
+    // Ensure we're authenticated
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError('Not authenticated. Please run setup first.', 401);
+    }
+
+    try {
+      const params = new URLSearchParams({
+        SearchTerm: query,
+        IncludeItemTypes: 'Audio',
+        Recursive: 'true',
+        Limit: limit.toString(),
+        Fields: 'Artists,Album,RunTimeTicks',
+      });
+
+      const response = await fetch(
+        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
+        {
+          headers: this.getHeaders(),
+        }
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError('Authentication token is invalid or expired. Please run setup again.', 401);
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to search: ${response.statusText}`,
+          response.status
+        );
+      }
+
+      const result = await response.json();
+      return (result.Items || []) as JellyfinItem[];
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error searching items: ${error}`);
+    }
+  }
+
+  /**
    * Get direct stream URL for an item
    */
   async getStreamUrl(itemId: string): Promise<string> {
