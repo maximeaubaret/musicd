@@ -51,6 +51,15 @@ export interface MediaSource {
 // Playback types
 export type PlaybackState = "playing" | "stopped";
 
+export interface QueueItem {
+  id: string;
+  name: string;
+  artist?: string;
+  album?: string;
+  duration: number; // seconds
+  jellyfinItem: JellyfinItem;
+}
+
 export interface PlaybackStatus {
   state: PlaybackState;
   currentItem: {
@@ -61,6 +70,8 @@ export interface PlaybackStatus {
   } | null;
   position: number; // seconds
   duration: number; // seconds
+  queue: QueueItem[];
+  queuePosition: number; // Current position in queue (0-based)
 }
 
 export interface PlayOptions {
@@ -70,6 +81,12 @@ export interface PlayOptions {
 // API request/response types
 export interface PlayRequest {
   itemId: string;
+}
+
+export interface QueueAddRequest {
+  itemIds: string[];
+  clearQueue?: boolean; // Clear existing queue before adding
+  playNow?: boolean; // Start playing immediately
 }
 
 export interface HealthResponse {

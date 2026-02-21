@@ -320,6 +320,128 @@ export class JellyfinService {
   }
 
   /**
+   * Get all tracks from an album
+   */
+  async getAlbumTracks(albumId: string): Promise<JellyfinItem[]> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const params = new URLSearchParams({
+        parentId: albumId,
+        includeItemTypes: "Audio",
+        sortBy: "ParentIndexNumber,IndexNumber,SortName",
+        recursive: "false",
+        userId: this.userId!,
+      });
+
+      const response = await fetch(
+        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
+        {
+          headers: this.getHeaders(),
+        },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to get album tracks: ${response.statusText}`,
+          response.status,
+        );
+      }
+
+      const result = await response.json();
+      const items = result.Items || [];
+
+      return items.map((item: any) => ({
+        Id: item.Id,
+        Name: item.Name,
+        Type: item.Type,
+        Artists: item.Artists || [],
+        Album: item.Album,
+        AlbumArtist: item.AlbumArtist,
+        RunTimeTicks: item.RunTimeTicks,
+      }));
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error fetching album tracks: ${error}`);
+    }
+  }
+
+  /**
+   * Get all tracks from an artist (all tracks from all their albums)
+   */
+  async getArtistTracks(artistId: string): Promise<JellyfinItem[]> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const params = new URLSearchParams({
+        artistIds: artistId,
+        includeItemTypes: "Audio",
+        recursive: "true",
+        sortBy: "Album,ParentIndexNumber,IndexNumber,SortName",
+        userId: this.userId!,
+      });
+
+      const response = await fetch(
+        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
+        {
+          headers: this.getHeaders(),
+        },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to get artist tracks: ${response.statusText}`,
+          response.status,
+        );
+      }
+
+      const result = await response.json();
+      const items = result.Items || [];
+
+      return items.map((item: any) => ({
+        Id: item.Id,
+        Name: item.Name,
+        Type: item.Type,
+        Artists: item.Artists || [],
+        Album: item.Album,
+        AlbumArtist: item.AlbumArtist,
+        RunTimeTicks: item.RunTimeTicks,
+      }));
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error fetching artist tracks: ${error}`);
+    }
+  }
+
+  /**
    * Get direct stream URL for an item
    */
   async getStreamUrl(itemId: string): Promise<string> {

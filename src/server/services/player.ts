@@ -1,23 +1,43 @@
-import { spawn, type ChildProcess } from 'child_process';
-import { unlink } from 'fs/promises';
-import type { PlaybackStatus, PlayOptions, JellyfinItem } from '../../shared/types.js';
-import { PlayerError } from '../../shared/types.js';
+import { spawn, type ChildProcess } from "child_process";
+import { unlink } from "fs/promises";
+import type {
+  PlaybackStatus,
+  PlayOptions,
+  JellyfinItem,
+  QueueItem,
+} from "../../shared/types.js";
+import { PlayerError } from "../../shared/types.js";
 
 export class PlayerService {
   private process: ChildProcess | null = null;
   private currentItem: JellyfinItem | null = null;
   private audioDevice: string;
   private startTime: number = 0;
+  private queue: QueueItem[] = [];
+  private queuePosition: number = -1; // -1 means no queue, 0+ is current position
+  private streamUrlGetter: ((itemId: string) => Promise<string>) | null = null;
 
-  constructor(audioDevice: string = 'default') {
+  constructor(audioDevice: string = "default") {
     this.audioDevice = audioDevice;
+  }
+
+  /**
+   * Set the callback to get stream URLs
+   * This is needed to auto-play next song in queue
+   */
+  setStreamUrlGetter(getter: (itemId: string) => Promise<string>): void {
+    this.streamUrlGetter = getter;
   }
 
   /**
    * Play a URL with ffplay
    */
-  async play(url: string, item: JellyfinItem, options?: PlayOptions): Promise<void> {
-    // Stop any existing playback
+  async play(
+    url: string,
+    item: JellyfinItem,
+    options?: PlayOptions,
+  ): Promise<void> {
+    // Stop any existing playback (this removes all listeners)
     if (this.isPlaying()) {
       await this.stop();
     }
@@ -27,32 +47,42 @@ export class PlayerService {
     try {
       // Spawn ffplay process
       const args = [
-        '-nodisp',        // No video display
-        '-autoexit',      // Exit when playback finishes
-        '-loglevel', 'quiet',  // Suppress output
+        "-nodisp", // No video display
+        "-autoexit", // Exit when playback finishes
+        "-loglevel",
+        "quiet", // Suppress output
         url,
       ];
 
-      this.process = spawn('ffplay', args);
+      this.process = spawn("ffplay", args);
       this.currentItem = item;
       this.startTime = Date.now();
 
       // Handle process events
-      this.process.on('error', (error) => {
-        console.error('ffplay process error:', error);
+      this.process.on("error", (error) => {
+        console.error("ffplay process error:", error);
         this.cleanup();
       });
 
-      this.process.on('exit', (code) => {
+      this.process.on("exit", async (code) => {
         console.log(`ffplay exited with code ${code}`);
         this.cleanup();
+
+        // Auto-play next song in queue if available
+        if (this.hasNext()) {
+          try {
+            await this.playNext();
+          } catch (error) {
+            console.error("Failed to auto-play next song:", error);
+          }
+        }
       });
 
       // Wait a bit to ensure ffplay has started
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       if (!this.process || this.process.exitCode !== null) {
-        throw new PlayerError('Failed to start ffplay process');
+        throw new PlayerError("Failed to start ffplay process");
       }
     } catch (error) {
       this.cleanup();
@@ -61,30 +91,129 @@ export class PlayerService {
   }
 
   /**
+   * Add items to the queue
+   */
+  addToQueue(items: JellyfinItem[], clearQueue: boolean = false): void {
+    if (clearQueue) {
+      this.queue = [];
+      this.queuePosition = -1;
+    }
+
+    const queueItems: QueueItem[] = items.map((item) => ({
+      id: item.Id,
+      name: item.Name,
+      artist: item.Artists?.[0],
+      album: item.Album,
+      duration: item.RunTimeTicks ? item.RunTimeTicks / 10000000 : 0,
+      jellyfinItem: item,
+    }));
+
+    this.queue.push(...queueItems);
+  }
+
+  /**
+   * Play from queue at specific position
+   */
+  async playFromQueue(position: number): Promise<void> {
+    if (position < 0 || position >= this.queue.length) {
+      throw new PlayerError("Invalid queue position");
+    }
+
+    if (!this.streamUrlGetter) {
+      throw new PlayerError("Stream URL getter not configured");
+    }
+
+    this.queuePosition = position;
+    const item = this.queue[position];
+
+    const streamUrl = await this.streamUrlGetter(item.id);
+    await this.play(streamUrl, item.jellyfinItem);
+  }
+
+  /**
+   * Play next song in queue
+   */
+  async playNext(): Promise<void> {
+    if (!this.hasNext()) {
+      throw new PlayerError("No next song in queue");
+    }
+
+    await this.playFromQueue(this.queuePosition + 1);
+  }
+
+  /**
+   * Play previous song in queue
+   */
+  async playPrevious(): Promise<void> {
+    if (!this.hasPrevious()) {
+      throw new PlayerError("No previous song in queue");
+    }
+
+    await this.playFromQueue(this.queuePosition - 1);
+  }
+
+  /**
+   * Check if there's a next song in queue
+   */
+  hasNext(): boolean {
+    return this.queue.length > 0 && this.queuePosition < this.queue.length - 1;
+  }
+
+  /**
+   * Check if there's a previous song in queue
+   */
+  hasPrevious(): boolean {
+    return this.queuePosition > 0;
+  }
+
+  /**
+   * Clear the queue
+   */
+  clearQueue(): void {
+    this.queue = [];
+    this.queuePosition = -1;
+  }
+
+  /**
+   * Get current queue
+   */
+  getQueue(): QueueItem[] {
+    return [...this.queue];
+  }
+
+  /**
+   * Get current queue position
+   */
+  getQueuePosition(): number {
+    return this.queuePosition;
+  }
+
+  /**
    * Stop playback
    */
   async stop(): Promise<void> {
     if (!this.process) {
-      throw new PlayerError('No playback in progress');
+      throw new PlayerError("No playback in progress");
     }
 
+    const processToStop = this.process;
+
     try {
-      this.process.kill('SIGTERM');
-      
+      // Remove all listeners to prevent exit handler from running
+      processToStop.removeAllListeners();
+
+      processToStop.kill("SIGTERM");
+
       // Wait for process to exit
       await new Promise((resolve) => {
-        if (this.process) {
-          this.process.on('exit', resolve);
-          // Timeout after 2 seconds
-          setTimeout(() => {
-            if (this.process) {
-              this.process.kill('SIGKILL');
-            }
-            resolve(null);
-          }, 2000);
-        } else {
+        processToStop.on("exit", resolve);
+        // Timeout after 2 seconds
+        setTimeout(() => {
+          if (processToStop && processToStop.exitCode === null) {
+            processToStop.kill("SIGKILL");
+          }
           resolve(null);
-        }
+        }, 2000);
       });
     } finally {
       this.cleanup();
@@ -97,10 +226,12 @@ export class PlayerService {
   async getStatus(): Promise<PlaybackStatus> {
     if (!this.isPlaying()) {
       return {
-        state: 'stopped',
+        state: "stopped",
         currentItem: null,
         position: 0,
         duration: 0,
+        queue: this.queue,
+        queuePosition: this.queuePosition,
       };
     }
 
@@ -111,7 +242,7 @@ export class PlayerService {
       : 0;
 
     return {
-      state: 'playing',
+      state: "playing",
       currentItem: this.currentItem
         ? {
             id: this.currentItem.Id,
@@ -122,6 +253,8 @@ export class PlayerService {
         : null,
       position: Math.min(elapsed, duration),
       duration,
+      queue: this.queue,
+      queuePosition: this.queuePosition,
     };
   }
 
