@@ -546,6 +546,7 @@ export function createApiRoutes(
           duration: item.RunTimeTicks
             ? Math.floor(item.RunTimeTicks / 10000000)
             : 0,
+          year: item.ProductionYear,
         })),
       });
     } catch (error) {
@@ -565,6 +566,160 @@ export function createApiRoutes(
         {
           success: false,
           error: "Search failed",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /api/album/:id - Get album info with tracks
+   */
+  app.get("/album/:id", async (c) => {
+    try {
+      const albumId = c.req.param("id");
+
+      if (!albumId) {
+        return c.json(
+          {
+            success: false,
+            error: "Album ID is required",
+          },
+          400,
+        );
+      }
+
+      // Get album metadata
+      const album = await jellyfinService.getItem(albumId);
+
+      if (album.Type !== "MusicAlbum") {
+        return c.json(
+          {
+            success: false,
+            error: "Item is not an album",
+          },
+          400,
+        );
+      }
+
+      // Get all tracks from the album
+      const tracks = await jellyfinService.getAlbumTracks(albumId);
+
+      return c.json({
+        success: true,
+        album: {
+          id: album.Id,
+          name: album.Name,
+          artist: album.AlbumArtist || album.Artists?.[0],
+          type: album.Type,
+        },
+        tracks: tracks.map((track) => ({
+          id: track.Id,
+          name: track.Name,
+          type: track.Type,
+          artist: track.Artists?.[0],
+          album: track.Album,
+          duration: track.RunTimeTicks
+            ? Math.floor(track.RunTimeTicks / 10000000)
+            : 0,
+          year: track.ProductionYear,
+          indexNumber: track.IndexNumber,
+        })),
+        count: tracks.length,
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 400 | 401;
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          statusCode,
+        );
+      }
+
+      console.error("Error getting album tracks:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to get album tracks",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /api/artist/:id - Get artist info with tracks
+   */
+  app.get("/artist/:id", async (c) => {
+    try {
+      const artistId = c.req.param("id");
+
+      if (!artistId) {
+        return c.json(
+          {
+            success: false,
+            error: "Artist ID is required",
+          },
+          400,
+        );
+      }
+
+      // Get artist metadata
+      const artist = await jellyfinService.getItem(artistId);
+
+      if (artist.Type !== "MusicArtist") {
+        return c.json(
+          {
+            success: false,
+            error: "Item is not an artist",
+          },
+          400,
+        );
+      }
+
+      // Get all tracks from the artist
+      const tracks = await jellyfinService.getArtistTracks(artistId);
+
+      return c.json({
+        success: true,
+        artist: {
+          id: artist.Id,
+          name: artist.Name,
+          type: artist.Type,
+        },
+        tracks: tracks.map((track) => ({
+          id: track.Id,
+          name: track.Name,
+          type: track.Type,
+          artist: track.Artists?.[0],
+          album: track.Album,
+          duration: track.RunTimeTicks
+            ? Math.floor(track.RunTimeTicks / 10000000)
+            : 0,
+          year: track.ProductionYear,
+        })),
+        count: tracks.length,
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 400 | 401;
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          statusCode,
+        );
+      }
+
+      console.error("Error getting artist tracks:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to get artist tracks",
         },
         500,
       );

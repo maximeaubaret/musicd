@@ -31,6 +31,32 @@ bun run lint             # Lint TypeScript files with ESLint
 - Place test files alongside source files with `.test.ts` suffix
 - Run single test: `bun test path/to/file.test.ts`
 
+## Development Workflow
+
+### Server Management
+
+**IMPORTANT**: Agents should NEVER start, stop, restart, or kill the development server on their own.
+
+- ❌ Do NOT run `bun run dev` to test changes
+- ❌ Do NOT kill running daemon processes
+- ❌ Do NOT check if the server is running
+- ❌ Do NOT attempt to test API endpoints by making HTTP requests
+
+**Why**: The user manages their own development environment and server lifecycle. The agent's role is to write code, not to manage runtime processes.
+
+**What to do instead**:
+- ✅ Write the code changes
+- ✅ Verify TypeScript compilation with `bun build`
+- ✅ Report completion and let the user test
+- ✅ If asked to verify functionality, suggest commands the user can run
+
+**Example**:
+```
+Agent: I've added the new API endpoints. You can test them by:
+1. Restarting your daemon
+2. Running: curl http://localhost:8765/api/album/123
+```
+
 ## Code Style Guidelines
 
 ### Import Conventions

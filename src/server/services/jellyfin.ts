@@ -236,6 +236,7 @@ export class JellyfinService {
         Album: hint.Album,
         AlbumArtist: hint.AlbumArtist,
         RunTimeTicks: hint.RunTimeTicks,
+        ProductionYear: hint.ProductionYear,
       }));
 
       // Step 2: If we found any artists, also fetch their albums

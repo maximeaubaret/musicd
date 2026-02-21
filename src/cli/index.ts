@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import select from "./select-with-quit.js";
+import expandableSelect from "./expandable-select.js";
 import { loadConfig } from "../shared/config.js";
 import type { PlaybackStatus, HealthResponse } from "../shared/types.js";
 import { runSetup } from "./setup.js";
@@ -78,19 +79,15 @@ program
   .command("play")
   .description("Search and play music from Jellyfin library")
   .argument("<query>", "Search query (song name, artist, or album)")
-  .option("-l, --limit <number>", "Maximum number of results to show", "20")
+  .option("-q, --queue", "Add to queue instead of replacing it")
   .action(async (query: string, options) => {
     try {
-      const limit = parseInt(options.limit, 10);
-      if (isNaN(limit) || limit < 1 || limit > 100) {
-        console.error(chalk.red("✗ Limit must be between 1 and 100"));
-        process.exit(1);
-      }
+      const addToQueue = options.queue || false;
 
       // Search for music
       process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
       const searchResult = await apiRequest(
-        `/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+        `/search?q=${encodeURIComponent(query)}`,
       );
 
       if (searchResult.count === 0) {
@@ -105,71 +102,115 @@ program
         selectedItem = searchResult.results[0];
         console.log(chalk.gray(`✓ Found 1 match`));
       } else {
-        // Multiple results - show interactive selection
-        const choices = searchResult.results.map((item: any) => {
+        // Multiple results - show interactive expandable selection
+        const formatItem = (item: any, isChild: boolean = false) => {
           const parts = [];
 
-          // Add type indicator
-          const typeIcon =
-            item.type === "Audio"
-              ? "🎵"
-              : item.type === "MusicAlbum"
-                ? "💿"
-                : item.type === "MusicArtist"
-                  ? "👤"
-                  : "📀";
-          parts.push(typeIcon);
+          if (!isChild) {
+            // Add type indicator for top-level items
+            const typeIcon =
+              item.type === "Audio"
+                ? "🎵"
+                : item.type === "MusicAlbum"
+                  ? "💿"
+                  : item.type === "MusicArtist"
+                    ? "👤"
+                    : "📀";
+            parts.push(typeIcon);
+          }
 
           parts.push(chalk.bold.white(item.name));
 
-          if (item.artist) {
+          if (item.artist && item.type !== "MusicArtist") {
             parts.push(chalk.cyan(item.artist));
           }
 
-          if (item.album) {
+          if (item.album && item.type !== "MusicAlbum") {
             parts.push(chalk.blue(item.album));
+          }
+
+          if (item.year) {
+            parts.push(chalk.gray(`(${item.year})`));
           }
 
           if (item.duration > 0) {
             parts.push(chalk.gray(formatDuration(item.duration)));
           }
 
-          return {
-            name: parts.join(" · "),
-            value: item.id,
-          };
-        });
+          return parts.join(" · ");
+        };
 
-        const selectedId = await select({
-          message: "Select a song to play:",
+        const choices = searchResult.results.map((item: any) => ({
+          name: formatItem(item),
+          value: item,
+          expandable: item.type === "MusicAlbum" || item.type === "MusicArtist",
+          id: item.id,
+        }));
+
+        selectedItem = await expandableSelect({
+          message: "Select a song to play (Tab to expand albums/artists):",
           choices,
+          onExpand: async (parentItem: any) => {
+            // Fetch tracks for this album or artist using proper API endpoints
+            if (parentItem.type === "MusicAlbum") {
+              const albumResult = await apiRequest(
+                `/album/${parentItem.id}`,
+              );
+              return albumResult.tracks.map((track: any) => ({
+                name: formatItem(track, true),
+                value: track,
+                isChild: true,
+                parentId: parentItem.id,
+                id: track.id,
+              }));
+            } else if (parentItem.type === "MusicArtist") {
+              const artistResult = await apiRequest(
+                `/artist/${parentItem.id}`,
+              );
+              return artistResult.tracks.map((track: any) => ({
+                name: formatItem(track, true),
+                value: track,
+                isChild: true,
+                parentId: parentItem.id,
+                id: track.id,
+              }));
+            }
+            return [];
+          },
         });
 
         // User quit with 'q'
-        if (selectedId === null) {
+        if (selectedItem === null) {
           console.log(chalk.gray("Cancelled"));
           process.exit(0);
         }
-
-        // Find the full item object
-        selectedItem = searchResult.results.find(
-          (item: any) => item.id === selectedId,
-        );
       }
 
       // Handle different item types
       if (selectedItem.type === "Audio") {
-        // It's a track - play it directly
-        const result = await apiRequest("/play", "POST", {
-          itemId: selectedItem.id,
+        // It's a track - add to queue
+        const result = await apiRequest("/queue/add", "POST", {
+          itemIds: [selectedItem.id],
+          clearQueue: !addToQueue,
+          playNow: true,
         });
 
-        console.log(chalk.green("▶ Playing:"), chalk.bold(result.item.name));
-        if (result.item.artist) {
-          console.log(chalk.gray("  by"), chalk.cyan(result.item.artist));
-        }
-        if (result.item.album) {
-          console.log(chalk.gray("  from"), chalk.blue(result.item.album));
+        if (addToQueue) {
+          console.log(chalk.green("✓ Added to queue:"), chalk.bold(selectedItem.name));
+          if (selectedItem.artist) {
+            console.log(chalk.gray("  by"), chalk.cyan(selectedItem.artist));
+          }
+          if (selectedItem.album) {
+            console.log(chalk.gray("  from"), chalk.blue(selectedItem.album));
+          }
+        } else {
+          console.log(chalk.green("▶ Playing:"), chalk.bold(selectedItem.name));
+          if (selectedItem.artist) {
+            console.log(chalk.gray("  by"), chalk.cyan(selectedItem.artist));
+          }
+          if (selectedItem.album) {
+            console.log(chalk.gray("  from"), chalk.blue(selectedItem.album));
+          }
         }
       } else if (
         selectedItem.type === "MusicAlbum" ||
@@ -179,21 +220,30 @@ program
         const itemType =
           selectedItem.type === "MusicAlbum" ? "album" : "artist";
         process.stdout.write(
-          chalk.gray(`🎵 Queueing ${itemType} "${selectedItem.name}"...\n`),
+          chalk.gray(`🎵 ${addToQueue ? "Adding" : "Queueing"} ${itemType} "${selectedItem.name}"...\n`),
         );
 
         const result = await apiRequest("/queue/add", "POST", {
           itemIds: [selectedItem.id],
-          clearQueue: true,
-          playNow: true,
+          clearQueue: !addToQueue,
+          playNow: !addToQueue,
         });
 
-        console.log(chalk.green("▶ Playing:"), chalk.bold(selectedItem.name));
-        console.log(
-          chalk.gray(
-            `  Queued ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
-          ),
-        );
+        if (addToQueue) {
+          console.log(chalk.green("✓ Added to queue:"), chalk.bold(selectedItem.name));
+          console.log(
+            chalk.gray(
+              `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+            ),
+          );
+        } else {
+          console.log(chalk.green("▶ Playing:"), chalk.bold(selectedItem.name));
+          console.log(
+            chalk.gray(
+              `  Queued ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+            ),
+          );
+        }
       } else {
         console.error(
           chalk.red(`✗ Cannot play item type: ${selectedItem.type}`),
@@ -283,8 +333,12 @@ program
           parts.push(chalk.blue(`from ${item.album}`));
         }
 
+        if (item.year) {
+          parts.push(chalk.gray(`(${item.year})`));
+        }
+
         if (item.duration > 0) {
-          parts.push(chalk.gray(`(${formatDuration(item.duration)})`));
+          parts.push(chalk.gray(formatDuration(item.duration)));
         }
 
         parts.push(chalk.dim(`[${item.id}]`));
