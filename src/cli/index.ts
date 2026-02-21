@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from 'commander';
+import chalk from 'chalk';
 import { loadConfig } from '../shared/config.js';
 import type { PlaybackStatus, HealthResponse } from '../shared/types.js';
 import { runSetup } from './setup.js';
@@ -127,25 +128,32 @@ program
       }
 
       if (result.count === 0) {
-        console.log(`No results found for "${query}"`);
+        console.log(chalk.yellow(`No results found for "${query}"`));
         return;
       }
 
-      console.log(`Found ${result.count} result${result.count === 1 ? '' : 's'} for "${query}":\n`);
+      console.log(chalk.gray(`Found ${result.count} result${result.count === 1 ? '' : 's'}\n`));
 
       for (const item of result.results) {
-        console.log(`${item.id}`);
-        console.log(`  ${item.name}`);
+        const parts = [
+          chalk.dim(item.id),
+          '-',
+          chalk.bold.white(item.name),
+        ];
+
         if (item.artist) {
-          console.log(`  by ${item.artist}`);
+          parts.push(chalk.cyan(`by ${item.artist}`));
         }
+
         if (item.album) {
-          console.log(`  from ${item.album}`);
+          parts.push(chalk.blue(`from ${item.album}`));
         }
+
         if (item.duration > 0) {
-          console.log(`  ${formatDuration(item.duration)}`);
+          parts.push(chalk.gray(`(${formatDuration(item.duration)})`));
         }
-        console.log('');
+
+        console.log(parts.join(' '));
       }
     } catch (error) {
       console.error('✗ Search failed:', error instanceof Error ? error.message : error);
