@@ -127,6 +127,9 @@ program
         selectedId = await select({
           message: 'Select a song to play:',
           choices,
+          theme: {
+            keybindings: ['vim'],
+          },
         });
       }
 
