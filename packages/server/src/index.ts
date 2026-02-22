@@ -1,13 +1,50 @@
 #!/usr/bin/env bun
 import { Hono } from "hono";
-import { logger } from "hono/logger";
-import { loadConfig, hasAuth } from "@musicd/shared";
+import { loadConfig, hasAuth, getConfigResolutionInfo } from "@musicd/shared";
 import { JellyfinService } from "./services/jellyfin.js";
 import { PlayerService } from "./services/player.js";
 import { createApiRoutes } from "./api/routes.js";
+import { logger } from "./logger.js";
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+const printLogs = args.includes("--print-logs");
+const showHelp = args.includes("--help") || args.includes("-h");
+
+if (showHelp) {
+  console.log("Usage: musicd-server [options]");
+  console.log("");
+  console.log("Options:");
+  console.log(
+    "  --print-logs  Enable debug logging (config resolution, requests)",
+  );
+  console.log("  -h, --help    Show this help message");
+  process.exit(0);
+}
+
+if (printLogs) {
+  logger.enable();
+}
 
 async function main() {
   console.log("🎵 Starting Jellyfin Music Daemon...");
+
+  // Log config resolution if --print-logs is enabled
+  if (logger.isEnabled()) {
+    const info = getConfigResolutionInfo();
+    logger.debug("Config resolution:");
+    logger.debug(`  Config path: ${info.xdgConfigPath}`);
+
+    if (info.configFile) {
+      logger.info(`Config loaded from: ${info.configFile}`);
+    } else {
+      logger.warn("No config file found, using defaults");
+    }
+
+    if (info.envOverrides.length > 0) {
+      logger.debug(`Environment overrides: ${info.envOverrides.join(", ")}`);
+    }
+  }
 
   const isConfigured = hasAuth();
   if (!isConfigured) {
@@ -73,8 +110,23 @@ async function main() {
   // Create Hono app
   const app = new Hono();
 
-  // Add logger middleware
-  app.use("*", logger());
+  // Add request logger middleware (only when --print-logs is enabled)
+  if (logger.isEnabled()) {
+    app.use("*", async (c, next) => {
+      const start = performance.now();
+      const method = c.req.method;
+      const path = c.req.path;
+      const auth = c.req.header("Authorization") ? "Bearer ***" : "none";
+
+      logger.debug(`--> ${method} ${path}`);
+      logger.debug(`    Auth: ${auth}`);
+
+      await next();
+
+      const duration = (performance.now() - start).toFixed(0);
+      logger.debug(`<-- ${method} ${path} ${c.res.status} (${duration}ms)`);
+    });
+  }
 
   // Mount API routes
   app.route(

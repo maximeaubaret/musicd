@@ -3,7 +3,13 @@ export type * from "./types.js";
 export { JellyfinError, PlayerError, ConfigError } from "./types.js";
 
 // Configuration
-export { loadConfig, getXdgConfigPath, getXdgConfigDir } from "./config.js";
+export {
+  loadConfig,
+  getXdgConfigPath,
+  getXdgConfigDir,
+  getConfigResolutionInfo,
+} from "./config.js";
+export type { ConfigResolutionInfo } from "./config.js";
 export type {
   Config,
   JellyfinConfig,

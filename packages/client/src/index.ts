@@ -25,13 +25,41 @@ export type {
 };
 
 /**
+ * Logger interface for request logging
+ */
+export interface ClientLogger {
+  debug: (...args: unknown[]) => void;
+}
+
+/**
+ * Options for creating a MusicDaemonClient
+ */
+export interface ClientOptions {
+  /** Optional logger for request debugging */
+  logger?: ClientLogger;
+}
+
+/**
  * HTTP client for Jellyfin Music Daemon API
  */
 export class MusicDaemonClient {
+  private logger?: ClientLogger;
+
   constructor(
     private baseUrl: string,
     private password?: string,
-  ) {}
+    options?: ClientOptions,
+  ) {
+    this.logger = options?.logger;
+  }
+
+  /**
+   * Set the logger for request debugging
+   * Useful when the logger needs to be configured after client construction
+   */
+  setLogger(logger: ClientLogger): void {
+    this.logger = logger;
+  }
 
   /**
    * Make HTTP request to daemon API
@@ -41,6 +69,8 @@ export class MusicDaemonClient {
     method: "GET" | "POST" = "GET",
     body?: any,
   ): Promise<T> {
+    const url = `${this.baseUrl}/api${endpoint}`;
+
     try {
       const headers: Record<string, string> = {};
 
@@ -54,13 +84,25 @@ export class MusicDaemonClient {
         headers["Authorization"] = `Bearer ${this.password}`;
       }
 
-      const response = await fetch(`${this.baseUrl}/api${endpoint}`, {
+      // Log the request
+      this.logger?.debug(`${method} ${url}`);
+      if (body) {
+        this.logger?.debug(`  Body: ${JSON.stringify(body)}`);
+      }
+      this.logger?.debug(`  Auth: ${this.password ? "Bearer ***" : "none"}`);
+
+      const startTime = performance.now();
+      const response = await fetch(url, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
       });
 
       const data = (await response.json()) as any;
+      const duration = (performance.now() - startTime).toFixed(0);
+
+      // Log the response
+      this.logger?.debug(`  Response: ${response.status} (${duration}ms)`);
 
       if (!response.ok) {
         // Special handling for 401 errors
@@ -79,10 +121,12 @@ export class MusicDaemonClient {
       return data as T;
     } catch (error) {
       if (error instanceof Error && error.message.includes("fetch failed")) {
+        this.logger?.debug(`  Error: Connection failed`);
         throw new Error(
           `Cannot connect to daemon at ${this.baseUrl}. Is it running? Start it with: bun run dev`,
         );
       }
+      this.logger?.debug(`  Error: ${error}`);
       throw error;
     }
   }

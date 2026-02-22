@@ -3,16 +3,63 @@ import { Command } from "commander";
 import chalk from "chalk";
 import select from "./select-with-quit.js";
 import expandableSelect from "./expandable-select.js";
-import { loadConfig, APP_VERSION } from "@musicd/shared";
+import {
+  loadConfig,
+  APP_VERSION,
+  getConfigResolutionInfo,
+} from "@musicd/shared";
 import type { PlaybackStatus } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
 import { runSetup } from "./setup.js";
+import { logger } from "./logger.js";
 
 const program = new Command();
+
+// Add global --print-logs option
+program.option("--print-logs", "Enable debug logging");
+
+// Hook to enable logger before any command runs
+program.hook("preAction", (thisCommand) => {
+  const opts = thisCommand.optsWithGlobals();
+  if (opts.printLogs) {
+    logger.enable();
+  }
+});
 
 // Load config to get daemon URL and password
 let daemonUrl: string;
 let daemonPassword: string | undefined;
+
+function initializeConfig(): void {
+  const info = getConfigResolutionInfo();
+
+  logger.debug("Config resolution:");
+  logger.debug(`  Config path: ${info.xdgConfigPath}`);
+
+  if (info.configFile) {
+    logger.info(`Config loaded from: ${info.configFile}`);
+  } else {
+    logger.warn("No config file found, using defaults");
+  }
+
+  if (info.envOverrides.length > 0) {
+    logger.debug(`Environment overrides: ${info.envOverrides.join(", ")}`);
+  }
+
+  try {
+    const config = loadConfig();
+    daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
+    daemonPassword = config.daemon.password;
+    logger.debug(`Daemon URL: ${daemonUrl}`);
+    logger.debug(`Daemon password: ${daemonPassword ? "(set)" : "(not set)"}`);
+  } catch (error) {
+    logger.warn(`Config load error: ${error}`);
+    daemonUrl = "http://127.0.0.1:8765";
+    daemonPassword = undefined;
+  }
+}
+
+// Initialize with defaults first (will be re-initialized in preAction if --print-logs is set)
 try {
   const config = loadConfig();
   daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
@@ -22,7 +69,16 @@ try {
   daemonPassword = undefined;
 }
 
-// Create client instance
+// Hook to log config info and set up client logger when --print-logs is enabled
+program.hook("preAction", () => {
+  if (logger.isEnabled()) {
+    initializeConfig();
+    // Pass the logger to the client for request logging
+    client.setLogger(logger);
+  }
+});
+
+// Create client instance (will use the initialized values)
 const client = new MusicDaemonClient(daemonUrl, daemonPassword);
 
 /**

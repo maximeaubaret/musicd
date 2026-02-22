@@ -10,10 +10,23 @@ import {
   DEFAULT_DAEMON_HOST,
   DEFAULT_AUDIO_DEVICE,
   DEFAULT_JELLYFIN_URL,
-  CONFIG_FILE_PATH,
   XDG_CONFIG_DIR,
   XDG_CONFIG_FILE,
 } from "./constants.js";
+
+/**
+ * Information about where configuration was resolved from
+ */
+export interface ConfigResolutionInfo {
+  /** Path to the config file that was loaded, or null if using defaults */
+  configFile: string | null;
+  /** Whether using default config (no file found) */
+  isDefaultConfig: boolean;
+  /** Environment variables that override config values */
+  envOverrides: string[];
+  /** The XDG config path that was checked */
+  xdgConfigPath: string;
+}
 
 // Zod schema for validation
 const ConfigSchema = z.object({
@@ -75,23 +88,14 @@ export function loadConfig(): Config {
     },
   };
 
-  // Try XDG config directory first
+  // Try XDG config directory
   const xdgConfigPath = getXdgConfigPath();
   if (existsSync(xdgConfigPath)) {
     try {
       const configData = readFileSync(xdgConfigPath, "utf-8");
       fileConfig = JSON.parse(configData);
     } catch (error) {
-      console.warn(`Could not load XDG config file (${xdgConfigPath}):`, error);
-    }
-  } else {
-    // Fall back to local config file
-    try {
-      const configPath = join(process.cwd(), CONFIG_FILE_PATH);
-      const configData = readFileSync(configPath, "utf-8");
-      fileConfig = JSON.parse(configData);
-    } catch (error) {
-      // Silent fallback to defaults
+      console.warn(`Could not load config file (${xdgConfigPath}):`, error);
     }
   }
 
@@ -140,4 +144,41 @@ export function loadConfig(): Config {
   }
 
   return config;
+}
+
+/**
+ * Get information about where configuration is resolved from
+ * This is useful for debugging config issues
+ */
+export function getConfigResolutionInfo(): ConfigResolutionInfo {
+  // Load .env file (same as loadConfig)
+  dotenv.config();
+
+  const xdgConfigPath = getXdgConfigPath();
+
+  let configFile: string | null = null;
+  let isDefaultConfig = true;
+
+  // Check XDG config path
+  if (existsSync(xdgConfigPath)) {
+    configFile = xdgConfigPath;
+    isDefaultConfig = false;
+  }
+
+  // Check which environment variables are set
+  const envOverrides: string[] = [];
+  if (process.env.JELLYFIN_URL) envOverrides.push("JELLYFIN_URL");
+  if (process.env.JELLYFIN_USERNAME) envOverrides.push("JELLYFIN_USERNAME");
+  if (process.env.JELLYFIN_PASSWORD) envOverrides.push("JELLYFIN_PASSWORD");
+  if (process.env.DAEMON_PORT) envOverrides.push("DAEMON_PORT");
+  if (process.env.DAEMON_HOST) envOverrides.push("DAEMON_HOST");
+  if (process.env.DAEMON_PASSWORD) envOverrides.push("DAEMON_PASSWORD");
+  if (process.env.AUDIO_DEVICE) envOverrides.push("AUDIO_DEVICE");
+
+  return {
+    configFile,
+    isDefaultConfig,
+    envOverrides,
+    xdgConfigPath,
+  };
 }
