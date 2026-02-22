@@ -61,20 +61,13 @@ export {
   // Server config functions
   loadServerConfig,
   saveServerConfig,
-  // Migration functions
-  checkNeedsMigration,
-  migrateLegacyConfig,
   // Deprecated (for backwards compatibility)
   loadConfig,
   getXdgConfigPath,
   getXdgConfigDir,
   getConfigResolutionInfo,
 } from "./config.js";
-export type {
-  CliConnectionArgs,
-  MigrationResult,
-  ConfigResolutionInfo,
-} from "./config.js";
+export type { CliConnectionArgs, ConfigResolutionInfo } from "./config.js";
 
 // Token storage
 export {

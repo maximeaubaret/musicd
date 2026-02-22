@@ -3,12 +3,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import select from "./select-with-quit.js";
 import expandableSelect from "./expandable-select.js";
-import {
-  resolveDaemonConnection,
-  checkNeedsMigration,
-  migrateLegacyConfig,
-  APP_VERSION,
-} from "@musicd/shared";
+import { resolveDaemonConnection, APP_VERSION } from "@musicd/shared";
 import type { PlaybackStatus } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
 import { runSetup } from "./setup.js";
@@ -57,23 +52,11 @@ function getClient(): MusicDaemonClient {
   return _client;
 }
 
-// Hook to enable logger and run migration before any command
+// Hook to enable logger before any command
 program.hook("preAction", (thisCommand) => {
   const opts = thisCommand.optsWithGlobals();
   if (opts.printLogs) {
     logger.enable();
-  }
-
-  // Check for and run migration if needed
-  if (checkNeedsMigration()) {
-    console.log("📦 Detected legacy config.json, migrating to new format...");
-    const result = migrateLegacyConfig();
-    if (result.migrated) {
-      console.log("✓ Migration complete!");
-      for (const warning of result.warnings) {
-        console.log(`  ⚠ ${warning}`);
-      }
-    }
   }
 });
 

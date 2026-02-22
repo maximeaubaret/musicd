@@ -168,10 +168,6 @@ musicd --host 10.0.0.5 --port 8765 --password secret status
 
 Set `daemon.password` in server config when exposing the daemon to your network. The CLI uses profiles or `DAEMON_PASSWORD` to authenticate.
 
-### Migration
-
-If you have an existing `config.json`, it will be automatically migrated to the new format on first run.
-
 ## REST API
 
 All endpoints require `Authorization: Bearer <password>` header if `DAEMON_PASSWORD` is set.

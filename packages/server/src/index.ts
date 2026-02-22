@@ -3,8 +3,6 @@ import { Hono } from "hono";
 import {
   loadServerConfig,
   hasAuth,
-  checkNeedsMigration,
-  migrateLegacyConfig,
   getServerConfigPath,
   DEFAULT_AUDIO_DEVICE,
 } from "@musicd/shared";
@@ -36,23 +34,6 @@ if (printLogs) {
 
 async function main() {
   console.log("🎵 Starting Jellyfin Music Daemon...");
-
-  // Check for and run migration if needed
-  if (checkNeedsMigration()) {
-    console.log("📦 Detected legacy config.json, migrating to new format...");
-    const result = migrateLegacyConfig();
-    if (result.migrated) {
-      console.log("✓ Migration complete!");
-      for (const warning of result.warnings) {
-        console.log(`  ⚠ ${warning}`);
-      }
-    } else {
-      console.warn("⚠ Migration failed:");
-      for (const warning of result.warnings) {
-        console.warn(`  ${warning}`);
-      }
-    }
-  }
 
   // Log config path if --print-logs is enabled
   if (logger.isEnabled()) {

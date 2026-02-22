@@ -1,12 +1,6 @@
 import { z } from "zod";
 import dotenv from "dotenv";
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-} from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import type {
@@ -290,119 +284,6 @@ export function saveServerConfig(config: ServerConfig): void {
   // Validate before saving
   ServerConfigSchema.parse(config);
   writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-}
-
-// ============================================
-// Migration Functions
-// ============================================
-
-export interface MigrationResult {
-  migrated: boolean;
-  cliConfig?: CliConfig;
-  serverConfig?: ServerConfig;
-  warnings: string[];
-}
-
-/**
- * Check if legacy config needs migration
- * Returns true if legacy config.json exists and new server.json doesn't
- */
-export function checkNeedsMigration(): boolean {
-  const legacyPath = getLegacyConfigPath();
-  const serverPath = getServerConfigPath();
-
-  return existsSync(legacyPath) && !existsSync(serverPath);
-}
-
-/**
- * Migrate legacy config.json to new cli.json and server.json format
- */
-export function migrateLegacyConfig(): MigrationResult {
-  const legacyPath = getLegacyConfigPath();
-  const warnings: string[] = [];
-
-  if (!existsSync(legacyPath)) {
-    return { migrated: false, warnings: ["No legacy config found"] };
-  }
-
-  let legacy: LegacyConfig;
-  try {
-    const content = readFileSync(legacyPath, "utf-8");
-    legacy = LegacyConfigSchema.parse(JSON.parse(content));
-  } catch (error) {
-    return {
-      migrated: false,
-      warnings: [`Failed to parse legacy config: ${error}`],
-    };
-  }
-
-  // Build server config
-  const serverConfig: ServerConfig = {
-    jellyfin: {
-      serverUrl: legacy.jellyfin?.serverUrl || DEFAULT_JELLYFIN_URL,
-    },
-    daemon: {
-      host: legacy.daemon?.host || DEFAULT_DAEMON_HOST,
-      port: legacy.daemon?.port || DEFAULT_DAEMON_PORT,
-      password: legacy.daemon?.password,
-    },
-  };
-
-  if (legacy.audio?.device) {
-    serverConfig.audio = { device: legacy.audio.device };
-  }
-
-  // Build CLI config with default profile pointing to same daemon
-  const cliConfig: CliConfig = {
-    defaultProfile: DEFAULT_PROFILE_NAME,
-    profiles: {
-      [DEFAULT_PROFILE_NAME]: {
-        host: legacy.daemon?.host || DEFAULT_DAEMON_HOST,
-        port: legacy.daemon?.port || DEFAULT_DAEMON_PORT,
-        password: legacy.daemon?.password,
-      },
-    },
-  };
-
-  // Note about auth token
-  if (legacy.jellyfin?.serverUrl) {
-    warnings.push(
-      "Auth token should already be in token storage (~/.local/share/musicd/auth.json). " +
-        "If authentication fails, re-run 'musicd setup'.",
-    );
-  }
-
-  if (
-    !legacy.jellyfin?.serverUrl ||
-    legacy.jellyfin.serverUrl === DEFAULT_JELLYFIN_URL
-  ) {
-    warnings.push(
-      "No Jellyfin server URL configured. Run 'musicd setup' to configure.",
-    );
-  }
-
-  // Save new configs
-  try {
-    saveServerConfig(serverConfig);
-    saveCliConfig(cliConfig);
-
-    // Rename legacy config to .bak
-    const backupPath = legacyPath + ".bak";
-    renameSync(legacyPath, backupPath);
-    warnings.push(`Legacy config backed up to ${backupPath}`);
-
-    return {
-      migrated: true,
-      cliConfig,
-      serverConfig,
-      warnings,
-    };
-  } catch (error) {
-    return {
-      migrated: false,
-      warnings: [`Migration failed: ${error}`],
-    };
-  }
 }
 
 // ============================================
