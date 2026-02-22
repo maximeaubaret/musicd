@@ -7,6 +7,7 @@ This document contains instructions for AI agents working on this project.
 A TypeScript/Bun daemon that plays music from a Jellyfin server. Uses Hono for HTTP API, Commander for CLI, and Zod for validation.
 
 **Monorepo Structure**: This project uses Bun workspaces with 4 packages:
+
 - `@musicd/shared` - Shared types, configuration, utilities
 - `@musicd/client` - HTTP client for daemon API
 - `@musicd/server` - HTTP daemon server
@@ -18,18 +19,19 @@ A TypeScript/Bun daemon that plays music from a Jellyfin server. Uses Hono for H
 
 ```bash
 bun install              # Install dependencies and link workspace packages
-bun run build            # Build all packages (required before first run)
 bun run dev              # Start the daemon with watch mode
 bun run cli              # Run the CLI tool
 bun run cli <command>    # Run specific CLI commands (setup, play, search, etc.)
 ```
+
+**Note**: No build step required! Bun runs TypeScript directly.
 
 ### Code Quality
 
 ```bash
 bun run format           # Format all files with Prettier
 bun run lint             # Lint all packages with ESLint
-bun run clean            # Clean build artifacts from all packages
+bun run clean            # Clean dist and bin directories
 ```
 
 ### Testing
@@ -54,12 +56,14 @@ bun run clean            # Clean build artifacts from all packages
 **Why**: The user manages their own development environment and server lifecycle. The agent's role is to write code, not to manage runtime processes.
 
 **What to do instead**:
+
 - ✅ Write the code changes
-- ✅ Verify TypeScript compilation with `bun build`
+- ✅ Verify TypeScript types with your editor/LSP
 - ✅ Report completion and let the user test
 - ✅ If asked to verify functionality, suggest commands the user can run
 
 **Example**:
+
 ```
 Agent: I've added the new API endpoints. You can test them by:
 1. Restarting your daemon
@@ -106,7 +110,7 @@ Agent: I've added the new API endpoints. You can test them by:
    import type { PlayRequest, HealthResponse } from "@musicd/shared";
    ```
 
-3. **Use `type` imports** for type-only imports:
+4. **Use `type` imports** for type-only imports:
    ```typescript
    import type { JellyfinConfig } from "./types.js"; // ✓ Correct for types
    import { JellyfinError } from "./types.js"; // ✓ Correct for runtime values

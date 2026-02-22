@@ -10,14 +10,10 @@
   "scripts": {
     "dev": "bun --watch packages/server/src/index.ts",
     "cli": "bun packages/cli/src/index.ts",
-    "build": "bun run --filter '*' build",
-    "build:shared": "bun run --filter @musicd/shared build",
-    "build:client": "bun run --filter @musicd/client build",
-    "build:server": "bun run --filter @musicd/server build",
-    "build:cli": "bun run --filter @musicd/cli build",
+    "build:exe": "bun run --filter @musicd/cli build:exe",
     "format": "prettier --write .",
     "lint": "bun run --filter '*' lint",
-    "clean": "rm -rf packages/*/dist"
+    "clean": "rm -rf packages/*/dist bin/"
   },
   "devDependencies": {
     "@types/bun": "^1.3.9",

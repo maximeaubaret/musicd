@@ -51,7 +51,7 @@ export interface MediaSource {
 }
 
 // Playback types
-export type PlaybackState = "playing" | "stopped";
+export type PlaybackState = "playing" | "paused" | "stopped";
 
 export interface QueueItem {
   id: string;
@@ -89,18 +89,6 @@ export interface QueueAddRequest {
   itemIds: string[];
   clearQueue?: boolean; // Clear existing queue before adding
   playNow?: boolean; // Start playing immediately
-}
-
-export interface HealthResponse {
-  status: "healthy" | "unhealthy";
-  daemon: {
-    uptime: number;
-    version: string;
-  };
-  jellyfin: {
-    connected: boolean;
-    serverUrl: string;
-  };
 }
 
 // Error types

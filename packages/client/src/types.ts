@@ -1,4 +1,4 @@
-import type { PlaybackStatus, HealthResponse, QueueItem } from "@musicd/shared";
+import type { PlaybackStatus, QueueItem } from "@musicd/shared";
 
 export interface AuthResponse {
   success: boolean;
@@ -101,4 +101,4 @@ export interface QueueOptions {
   playNow?: boolean;
 }
 
-export { PlaybackStatus, HealthResponse };
+export { PlaybackStatus };

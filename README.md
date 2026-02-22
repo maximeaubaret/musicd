@@ -26,26 +26,20 @@ A TypeScript/Bun daemon that plays music from a Jellyfin server.
 bun install
 ```
 
-2. Build all packages:
-
-```bash
-bun run build
-```
-
-3. Configure Jellyfin server URL (optional):
+2. Configure Jellyfin server URL (optional):
 
 ```bash
 # Edit .env or config/default.json to set your Jellyfin server URL
 # Default is http://localhost:8096
 ```
 
-4. Start the daemon:
+3. Start the daemon:
 
 ```bash
 bun run dev
 ```
 
-5. Run the setup wizard (in another terminal):
+4. Run the setup wizard (in another terminal):
 
 ```bash
 bun run cli setup
@@ -155,24 +149,17 @@ This project uses Bun workspaces with 4 packages:
 # Install dependencies and link workspace packages
 bun install
 
-# Build all packages
-bun run build
-
-# Build specific package
-bun run build:shared
-bun run build:client
-bun run build:server
-bun run build:cli
-
 # Format code
 bun run format
 
 # Lint code
 bun run lint
 
-# Clean build artifacts
+# Clean build artifacts (if any were generated)
 bun run clean
 ```
+
+**Note**: No build step required! Bun runs TypeScript directly.
 
 ## License
 

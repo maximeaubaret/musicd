@@ -13,9 +13,27 @@ export class PlayerService {
   private currentItem: JellyfinItem | null = null;
   private audioDevice: string;
   private startTime: number = 0;
+  private pausedAt: number = 0; // Time when paused (in seconds)
+  private isPaused: boolean = false;
   private queue: QueueItem[] = [];
   private queuePosition: number = -1; // -1 means no queue, 0+ is current position
   private streamUrlGetter: ((itemId: string) => Promise<string>) | null = null;
+  private playSessionId: string | null = null;
+  private progressInterval: NodeJS.Timeout | null = null;
+  private playbackReporter: {
+    reportStart: (itemId: string, sessionId: string) => Promise<void>;
+    reportProgress: (
+      itemId: string,
+      sessionId: string,
+      ticks: number,
+      paused: boolean,
+    ) => Promise<void>;
+    reportStop: (
+      itemId: string,
+      sessionId: string,
+      ticks: number,
+    ) => Promise<void>;
+  } | null = null;
 
   constructor(audioDevice: string = "default") {
     this.audioDevice = audioDevice;
@@ -27,6 +45,27 @@ export class PlayerService {
    */
   setStreamUrlGetter(getter: (itemId: string) => Promise<string>): void {
     this.streamUrlGetter = getter;
+  }
+
+  /**
+   * Set the playback reporter for Jellyfin play tracking
+   * This enables play count tracking and scrobbling
+   */
+  setPlaybackReporter(reporter: {
+    reportStart: (itemId: string, sessionId: string) => Promise<void>;
+    reportProgress: (
+      itemId: string,
+      sessionId: string,
+      ticks: number,
+      paused: boolean,
+    ) => Promise<void>;
+    reportStop: (
+      itemId: string,
+      sessionId: string,
+      ticks: number,
+    ) => Promise<void>;
+  }): void {
+    this.playbackReporter = reporter;
   }
 
   /**
@@ -83,6 +122,36 @@ export class PlayerService {
 
       if (!this.process || this.process.exitCode !== null) {
         throw new PlayerError("Failed to start ffplay process");
+      }
+
+      // Report playback start to Jellyfin
+      if (this.playbackReporter) {
+        try {
+          this.playSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          await this.playbackReporter.reportStart(item.Id, this.playSessionId);
+
+          // Set up progress reporting every 10 seconds
+          this.progressInterval = setInterval(async () => {
+            if (this.currentItem && this.playSessionId) {
+              const elapsed = this.isPaused
+                ? this.pausedAt
+                : (Date.now() - this.startTime) / 1000;
+              const ticks = Math.floor(elapsed * 10000000);
+              try {
+                await this.playbackReporter!.reportProgress(
+                  this.currentItem.Id,
+                  this.playSessionId,
+                  ticks,
+                  this.isPaused,
+                );
+              } catch (error) {
+                console.error("Failed to report playback progress:", error);
+              }
+            }
+          }, 10000);
+        } catch (error) {
+          console.error("Failed to report playback start:", error);
+        }
       }
     } catch (error) {
       this.cleanup();
@@ -218,6 +287,47 @@ export class PlayerService {
   }
 
   /**
+   * Pause playback
+   */
+  pause(): void {
+    if (!this.process || this.process.exitCode !== null) {
+      throw new PlayerError("No playback in progress");
+    }
+
+    if (this.isPaused) {
+      throw new PlayerError("Playback is already paused");
+    }
+
+    // Calculate current position
+    const elapsed = (Date.now() - this.startTime) / 1000;
+    this.pausedAt = elapsed;
+    this.isPaused = true;
+
+    // Send SIGSTOP to pause the process
+    this.process.kill("SIGSTOP");
+  }
+
+  /**
+   * Resume playback
+   */
+  resume(): void {
+    if (!this.process || this.process.exitCode !== null) {
+      throw new PlayerError("No playback in progress");
+    }
+
+    if (!this.isPaused) {
+      throw new PlayerError("Playback is not paused");
+    }
+
+    this.isPaused = false;
+    // Adjust start time to account for pause duration
+    this.startTime = Date.now() - this.pausedAt * 1000;
+
+    // Send SIGCONT to resume the process
+    this.process.kill("SIGCONT");
+  }
+
+  /**
    * Stop playback
    */
   async stop(): Promise<void> {
@@ -227,9 +337,31 @@ export class PlayerService {
 
     const processToStop = this.process;
 
+    // Report playback stopped before cleanup
+    if (this.playbackReporter && this.currentItem && this.playSessionId) {
+      try {
+        const elapsed = this.isPaused
+          ? this.pausedAt
+          : (Date.now() - this.startTime) / 1000;
+        const ticks = Math.floor(elapsed * 10000000);
+        await this.playbackReporter.reportStop(
+          this.currentItem.Id,
+          this.playSessionId,
+          ticks,
+        );
+      } catch (error) {
+        console.error("Failed to report playback stopped:", error);
+      }
+    }
+
     try {
       // Remove all listeners to prevent exit handler from running
       processToStop.removeAllListeners();
+
+      // If paused, resume first so we can terminate cleanly
+      if (this.isPaused) {
+        processToStop.kill("SIGCONT");
+      }
 
       processToStop.kill("SIGTERM");
 
@@ -265,13 +397,15 @@ export class PlayerService {
     }
 
     // Calculate approximate position based on elapsed time
-    const elapsed = (Date.now() - this.startTime) / 1000; // seconds
+    const elapsed = this.isPaused
+      ? this.pausedAt
+      : (Date.now() - this.startTime) / 1000; // seconds
     const duration = this.currentItem?.RunTimeTicks
       ? this.currentItem.RunTimeTicks / 10000000 // Convert ticks to seconds
       : 0;
 
     return {
-      state: "playing",
+      state: this.isPaused ? "paused" : "playing",
       currentItem: this.currentItem
         ? {
             id: this.currentItem.Id,
@@ -298,8 +432,33 @@ export class PlayerService {
    * Clean up resources
    */
   private cleanup(): void {
+    // Clear progress reporting interval
+    if (this.progressInterval) {
+      clearInterval(this.progressInterval);
+      this.progressInterval = null;
+    }
+
+    // Report playback stopped if we have an active session
+    // This handles the case where the process exits naturally
+    if (this.playbackReporter && this.currentItem && this.playSessionId) {
+      const elapsed = this.isPaused
+        ? this.pausedAt
+        : (Date.now() - this.startTime) / 1000;
+      const ticks = Math.floor(elapsed * 10000000);
+
+      // Fire and forget - don't wait for the report
+      this.playbackReporter
+        .reportStop(this.currentItem.Id, this.playSessionId, ticks)
+        .catch((error) => {
+          console.error("Failed to report playback stopped in cleanup:", error);
+        });
+    }
+
     this.process = null;
     this.currentItem = null;
+    this.playSessionId = null;
     this.startTime = 0;
+    this.pausedAt = 0;
+    this.isPaused = false;
   }
 }

@@ -130,6 +130,72 @@ export function createApiRoutes(
   });
 
   /**
+   * POST /api/pause - Pause playback
+   */
+  app.post("/pause", async (c) => {
+    try {
+      playerService.pause();
+
+      return c.json({
+        success: true,
+        message: "Playback paused",
+      });
+    } catch (error) {
+      if (error instanceof PlayerError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          400,
+        );
+      }
+
+      console.error("Unexpected error in /pause:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Internal server error",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * POST /api/resume - Resume playback
+   */
+  app.post("/resume", async (c) => {
+    try {
+      playerService.resume();
+
+      return c.json({
+        success: true,
+        message: "Playback resumed",
+      });
+    } catch (error) {
+      if (error instanceof PlayerError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          400,
+        );
+      }
+
+      console.error("Unexpected error in /resume:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Internal server error",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
    * POST /api/stop - Stop playback
    */
   app.post("/stop", async (c) => {

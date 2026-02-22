@@ -460,6 +460,166 @@ export class JellyfinService {
   }
 
   /**
+   * Report playback start to Jellyfin server
+   * This enables play tracking and scrobbling
+   */
+  async reportPlaybackStart(
+    itemId: string,
+    playSessionId: string,
+  ): Promise<void> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const response = await fetch(
+        `${this.config.serverUrl}/Sessions/Playing`,
+        {
+          method: "POST",
+          headers: this.getHeaders(),
+          body: JSON.stringify({
+            ItemId: itemId,
+            PlaySessionId: playSessionId,
+            CanSeek: true,
+            PlayMethod: "DirectStream",
+            PositionTicks: 0,
+            IsPaused: false,
+          }),
+        },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok && response.status !== 204) {
+        throw new JellyfinError(
+          `Failed to report playback start: ${response.statusText}`,
+          response.status,
+        );
+      }
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error reporting playback start: ${error}`);
+    }
+  }
+
+  /**
+   * Report playback progress to Jellyfin server
+   * Should be called periodically during playback (every 10-30 seconds)
+   */
+  async reportPlaybackProgress(
+    itemId: string,
+    playSessionId: string,
+    positionTicks: number,
+    isPaused: boolean,
+  ): Promise<void> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const response = await fetch(
+        `${this.config.serverUrl}/Sessions/Playing/Progress`,
+        {
+          method: "POST",
+          headers: this.getHeaders(),
+          body: JSON.stringify({
+            ItemId: itemId,
+            PlaySessionId: playSessionId,
+            CanSeek: true,
+            PlayMethod: "DirectStream",
+            PositionTicks: positionTicks,
+            IsPaused: isPaused,
+          }),
+        },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok && response.status !== 204) {
+        throw new JellyfinError(
+          `Failed to report playback progress: ${response.statusText}`,
+          response.status,
+        );
+      }
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error reporting playback progress: ${error}`);
+    }
+  }
+
+  /**
+   * Report playback stopped to Jellyfin server
+   * Should be called when playback ends (naturally or by user action)
+   */
+  async reportPlaybackStopped(
+    itemId: string,
+    playSessionId: string,
+    positionTicks: number,
+  ): Promise<void> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const response = await fetch(
+        `${this.config.serverUrl}/Sessions/Playing/Stopped`,
+        {
+          method: "POST",
+          headers: this.getHeaders(),
+          body: JSON.stringify({
+            ItemId: itemId,
+            PlaySessionId: playSessionId,
+            PositionTicks: positionTicks,
+            Failed: false,
+          }),
+        },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok && response.status !== 204) {
+        throw new JellyfinError(
+          `Failed to report playback stopped: ${response.statusText}`,
+          response.status,
+        );
+      }
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error reporting playback stopped: ${error}`);
+    }
+  }
+
+  /**
    * Get X-Emby-Authorization header for authentication requests
    */
   private getAuthHeader(): string {

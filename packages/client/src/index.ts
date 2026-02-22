@@ -9,7 +9,6 @@ import type {
   ArtistResponse,
   QueueOptions,
   PlaybackStatus,
-  HealthResponse,
 } from "./types.js";
 
 export type {
@@ -23,7 +22,6 @@ export type {
   ArtistResponse,
   QueueOptions,
   PlaybackStatus,
-  HealthResponse,
 };
 
 /**
@@ -93,6 +91,20 @@ export class MusicDaemonClient {
   }
 
   /**
+   * Pause playback
+   */
+  async pause(): Promise<void> {
+    await this.request("/pause", "POST");
+  }
+
+  /**
+   * Resume playback
+   */
+  async resume(): Promise<void> {
+    await this.request("/resume", "POST");
+  }
+
+  /**
    * Stop playback
    */
   async stop(): Promise<void> {
@@ -104,13 +116,6 @@ export class MusicDaemonClient {
    */
   async status(): Promise<PlaybackStatus> {
     return this.request("/status");
-  }
-
-  /**
-   * Get daemon health status
-   */
-  async health(): Promise<HealthResponse> {
-    return this.request("/health");
   }
 
   /**

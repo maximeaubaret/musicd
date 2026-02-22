@@ -3,8 +3,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import select from "./select-with-quit.js";
 import expandableSelect from "./expandable-select.js";
-import { loadConfig } from "@musicd/shared";
-import type { PlaybackStatus, HealthResponse } from "@musicd/client";
+import { loadConfig, APP_VERSION } from "@musicd/shared";
+import type { PlaybackStatus } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
 import { runSetup } from "./setup.js";
 
@@ -35,7 +35,7 @@ function formatDuration(seconds: number): string {
 program
   .name("musicd")
   .description("CLI for Jellyfin Music Daemon")
-  .version("0.1.0");
+  .version(APP_VERSION);
 
 program
   .command("setup")
@@ -48,22 +48,61 @@ program
 program
   .command("play")
   .description("Search and play music from Jellyfin library")
-  .argument("<query>", "Search query (song name, artist, or album)")
+  .argument("[query]", "Search query (song name, artist, or album)")
+  .option("-i, --id <itemId>", "Play directly by Jellyfin item ID")
   .option("-q, --queue", "Add to queue instead of replacing it")
-  .action(async (query: string, options) => {
+  .action(async (query: string | undefined, options) => {
     try {
+      // Validate that either query or --id is provided
+      if (!query && !options.id) {
+        console.error(
+          chalk.red("✗ Error: Either <query> or --id must be provided"),
+        );
+        console.log(chalk.gray("Usage: musicd play <query> [options]"));
+        console.log(chalk.gray("   or: musicd play --id <itemId> [options]"));
+        process.exit(1);
+      }
+
       const addToQueue = options.queue || false;
+      let selectedItem: any;
+
+      // If --id is provided, skip search and play directly
+      if (options.id) {
+        // Play directly by ID - we'll queue it and let the daemon handle it
+        const result = await client.addToQueue([options.id], {
+          clearQueue: !addToQueue,
+          playNow: !addToQueue,
+        });
+
+        if (addToQueue) {
+          console.log(
+            chalk.green("✓ Added to queue by ID:"),
+            chalk.bold(options.id),
+          );
+          console.log(
+            chalk.gray(
+              `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+            ),
+          );
+        } else {
+          console.log(chalk.green("▶ Playing by ID:"), chalk.bold(options.id));
+          console.log(
+            chalk.gray(
+              `  Queued ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+            ),
+          );
+        }
+        return;
+      }
 
       // Search for music
       process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
-      const searchResult = await client.search(query);
+      const searchResult = await client.search(query!);
 
       if (searchResult.count === 0) {
         console.log(chalk.yellow("✗ No results found"));
         process.exit(1);
       }
-
-      let selectedItem: any;
 
       // If only one result, auto-select it
       if (searchResult.count === 1) {
@@ -159,7 +198,10 @@ program
         });
 
         if (addToQueue) {
-          console.log(chalk.green("✓ Added to queue:"), chalk.bold(selectedItem.name));
+          console.log(
+            chalk.green("✓ Added to queue:"),
+            chalk.bold(selectedItem.name),
+          );
           if (selectedItem.artist) {
             console.log(chalk.gray("  by"), chalk.cyan(selectedItem.artist));
           }
@@ -183,7 +225,9 @@ program
         const itemType =
           selectedItem.type === "MusicAlbum" ? "album" : "artist";
         process.stdout.write(
-          chalk.gray(`🎵 ${addToQueue ? "Adding" : "Queueing"} ${itemType} "${selectedItem.name}"...\n`),
+          chalk.gray(
+            `🎵 ${addToQueue ? "Adding" : "Queueing"} ${itemType} "${selectedItem.name}"...\n`,
+          ),
         );
 
         const result = await client.addToQueue([selectedItem.id], {
@@ -192,7 +236,10 @@ program
         });
 
         if (addToQueue) {
-          console.log(chalk.green("✓ Added to queue:"), chalk.bold(selectedItem.name));
+          console.log(
+            chalk.green("✓ Added to queue:"),
+            chalk.bold(selectedItem.name),
+          );
           console.log(
             chalk.gray(
               `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
@@ -215,6 +262,38 @@ program
     } catch (error) {
       console.error(
         chalk.red("✗ Failed to play:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("pause")
+  .description("Pause playback")
+  .action(async () => {
+    try {
+      await client.pause();
+      console.log(chalk.yellow("⏸  Playback paused"));
+    } catch (error) {
+      console.error(
+        chalk.red("✗ Failed to pause:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("resume")
+  .description("Resume playback")
+  .action(async () => {
+    try {
+      await client.resume();
+      console.log(chalk.green("▶ Playback resumed"));
+    } catch (error) {
+      console.error(
+        chalk.red("✗ Failed to resume:"),
         error instanceof Error ? error.message : error,
       );
       process.exit(1);
@@ -333,7 +412,7 @@ program
           );
         }
       } else {
-        // Currently playing
+        // Currently playing or paused
         const parts = [];
         parts.push(chalk.bold.white(status.currentItem?.name || "Unknown"));
 
@@ -345,7 +424,11 @@ program
           parts.push(chalk.blue(status.currentItem.album));
         }
 
-        console.log(chalk.green("▶ Playing:"), parts.join(" · "));
+        const stateLabel =
+          status.state === "paused" ? "⏸  Paused:" : "▶ Playing:";
+        const stateColor =
+          status.state === "paused" ? chalk.yellow : chalk.green;
+        console.log(stateColor(stateLabel), parts.join(" · "));
         console.log(
           chalk.gray(
             `  ${formatDuration(status.position)} / ${formatDuration(status.duration)}`,
@@ -365,34 +448,6 @@ program
     } catch (error) {
       console.error(
         chalk.red("✗ Failed to get status:"),
-        error instanceof Error ? error.message : error,
-      );
-      process.exit(1);
-    }
-  });
-
-program
-  .command("health")
-  .description("Check daemon health")
-  .action(async () => {
-    try {
-      const health: HealthResponse = await client.health();
-
-      console.log(
-        `Status: ${health.status === "healthy" ? "✓ Healthy" : "✗ Unhealthy"}`,
-      );
-      console.log(`Daemon version: ${health.daemon.version}`);
-      console.log(`Uptime: ${health.daemon.uptime}s`);
-      console.log(
-        `Jellyfin: ${health.jellyfin.connected ? "✓ Connected" : "✗ Disconnected"} (${health.jellyfin.serverUrl})`,
-      );
-
-      if (health.status !== "healthy") {
-        process.exit(1);
-      }
-    } catch (error) {
-      console.error(
-        "✗ Health check failed:",
         error instanceof Error ? error.message : error,
       );
       process.exit(1);

@@ -1,7 +1,12 @@
 import { createInterface } from "readline";
 import { stdin as input, stdout as output } from "process";
 import { MusicDaemonClient } from "@musicd/client";
-import { loadConfig, hasAuth, clearAuth } from "@musicd/shared";
+import {
+  loadConfig,
+  hasAuth,
+  clearAuth,
+  getXdgConfigPath,
+} from "@musicd/shared";
 
 /**
  * Prompt for user input
@@ -91,7 +96,7 @@ export async function runSetup(force: boolean = false): Promise<void> {
     const config = loadConfig();
 
     console.log(`Jellyfin Server: ${config.jellyfin.serverUrl}`);
-    console.log("(Edit .env or config/default.json to change server URL)\n");
+    console.log(`(Edit .env or ${getXdgConfigPath()} to change server URL)\n`);
 
     // Prompt for credentials
     const username = await prompt("Jellyfin Username: ");

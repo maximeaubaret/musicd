@@ -1,7 +1,8 @@
 import { z } from "zod";
 import dotenv from "dotenv";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import type { Config } from "./types.js";
 import { ConfigError } from "./types.js";
 import {
@@ -10,6 +11,8 @@ import {
   DEFAULT_AUDIO_DEVICE,
   DEFAULT_JELLYFIN_URL,
   CONFIG_FILE_PATH,
+  XDG_CONFIG_DIR,
+  XDG_CONFIG_FILE,
 } from "./constants.js";
 
 // Zod schema for validation
@@ -29,8 +32,26 @@ const ConfigSchema = z.object({
 });
 
 /**
+ * Get XDG config directory path
+ */
+export function getXdgConfigPath(): string {
+  const xdgConfigHome =
+    process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return join(xdgConfigHome, XDG_CONFIG_DIR, XDG_CONFIG_FILE);
+}
+
+/**
+ * Get XDG config directory (without filename)
+ */
+export function getXdgConfigDir(): string {
+  const xdgConfigHome =
+    process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return join(xdgConfigHome, XDG_CONFIG_DIR);
+}
+
+/**
  * Load configuration from file and environment variables
- * Priority: env vars > config file > defaults
+ * Priority: env vars > XDG config > local config file > defaults
  */
 export function loadConfig(): Config {
   // Load .env file
@@ -52,12 +73,24 @@ export function loadConfig(): Config {
     },
   };
 
-  try {
-    const configPath = join(process.cwd(), CONFIG_FILE_PATH);
-    const configData = readFileSync(configPath, "utf-8");
-    fileConfig = JSON.parse(configData);
-  } catch (error) {
-    console.warn("Could not load config file, using defaults:", error);
+  // Try XDG config directory first
+  const xdgConfigPath = getXdgConfigPath();
+  if (existsSync(xdgConfigPath)) {
+    try {
+      const configData = readFileSync(xdgConfigPath, "utf-8");
+      fileConfig = JSON.parse(configData);
+    } catch (error) {
+      console.warn(`Could not load XDG config file (${xdgConfigPath}):`, error);
+    }
+  } else {
+    // Fall back to local config file
+    try {
+      const configPath = join(process.cwd(), CONFIG_FILE_PATH);
+      const configData = readFileSync(configPath, "utf-8");
+      fileConfig = JSON.parse(configData);
+    } catch (error) {
+      // Silent fallback to defaults
+    }
   }
 
   // Merge with environment variables (env vars take precedence)
