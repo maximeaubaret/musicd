@@ -1,5 +1,7 @@
-import { spawn, type ChildProcess } from "child_process";
-import { PlaybackBackend, PlaybackError } from "./backend";
+import { spawn, type ChildProcess, type SpawnOptions } from "child_process";
+import type { PlaybackBackend } from "./backend";
+import { PlaybackError } from "./backend";
+import { logger } from "../../logger";
 
 /**
  * FFPlay backend implementation
@@ -8,14 +10,16 @@ import { PlaybackBackend, PlaybackError } from "./backend";
 export class FFPlayBackend implements PlaybackBackend {
   private process: ChildProcess | null = null;
   private audioDevice: string;
+  private debug: boolean;
   private startTime: number = 0;
   private pausedAt: number = 0;
   private isPaused_: boolean = false;
   private onCompleteCallback?: () => void;
   private onErrorCallback?: (error: Error) => void;
 
-  constructor(audioDevice: string = "default") {
+  constructor(audioDevice: string = "default", debug: boolean = false) {
     this.audioDevice = audioDevice;
+    this.debug = debug;
   }
 
   async play(url: string): Promise<void> {
@@ -30,31 +34,74 @@ export class FFPlayBackend implements PlaybackBackend {
         "-nodisp", // No video display
         "-autoexit", // Exit when playback finishes
         "-loglevel",
-        "quiet", // Suppress output
+        this.debug ? "info" : "quiet", // Show output in debug mode
         url,
       ];
 
-      // Add audio device if not default
+      // Configure spawn options
+      const spawnOptions: SpawnOptions = {
+        stdio: this.debug ? ["ignore", "pipe", "pipe"] : "ignore",
+      };
+
+      // Set SDL audio driver via environment variable if not default
+      // ffplay uses SDL for audio output, which is controlled via environment variables
       if (this.audioDevice !== "default") {
-        args.unshift("-audio_device", this.audioDevice);
+        spawnOptions.env = {
+          ...process.env,
+          SDL_AUDIODRIVER: this.audioDevice, // e.g., "pulseaudio", "alsa", "pipewire"
+        };
       }
 
-      this.process = spawn("ffplay", args);
+      if (this.debug) {
+        logger.debug(
+          `[ffplay] Starting playback with command: ffplay ${args.join(" ")}`,
+        );
+        if (this.audioDevice !== "default") {
+          logger.debug(`[ffplay] Using SDL audio driver: ${this.audioDevice}`);
+        }
+      }
+
+      this.process = spawn("ffplay", args, spawnOptions);
       this.startTime = Date.now();
       this.pausedAt = 0;
       this.isPaused_ = false;
 
+      // Capture stdout/stderr when in debug mode
+      if (this.debug) {
+        const stdout = this.process.stdout;
+        const stderr = this.process.stderr;
+
+        if (stdout) {
+          logger.debug(`[ffplay] stdout listener attached`);
+          stdout.on("data", (data: Buffer) => {
+            logger.debug(`[ffplay stdout] ${data.toString().trim()}`);
+          });
+        } else {
+          logger.debug(`[ffplay] WARNING: stdout is null`);
+        }
+
+        if (stderr) {
+          logger.debug(`[ffplay] stderr listener attached`);
+          stderr.on("data", (data: Buffer) => {
+            logger.debug(`[ffplay stderr] ${data.toString().trim()}`);
+          });
+        } else {
+          logger.debug(`[ffplay] WARNING: stderr is null`);
+        }
+      }
+
       // Handle process events
-      this.process.on("error", (error) => {
-        console.error("ffplay process error:", error);
+      const childProcess = this.process;
+      childProcess.on("error", (error) => {
+        logger.error("[ffplay] process error:", error);
         this.cleanup();
         if (this.onErrorCallback) {
           this.onErrorCallback(error);
         }
       });
 
-      this.process.on("exit", (code) => {
-        console.log(`ffplay exited with code ${code}`);
+      childProcess.on("exit", (code) => {
+        logger.debug(`[ffplay] exited with code ${code}`);
         const wasPlaying = this.isPlaying();
         this.cleanup();
 

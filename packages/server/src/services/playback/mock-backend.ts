@@ -1,4 +1,4 @@
-import { PlaybackBackend } from "./backend";
+import type { PlaybackBackend } from "./backend";
 
 /**
  * Mock backend for testing

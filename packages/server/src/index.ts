@@ -77,6 +77,7 @@ async function main() {
   const jellyfinService = new JellyfinService(config.jellyfin);
   const backend = new FFPlayBackend(
     config.audio?.device || DEFAULT_AUDIO_DEVICE,
+    logger.isEnabled(),
   );
   const playerService = new PlayerService(backend);
   const startTime = Date.now();
