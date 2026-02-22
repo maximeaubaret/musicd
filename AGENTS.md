@@ -13,45 +13,60 @@ A TypeScript/Bun daemon that plays music from a Jellyfin server. Uses Hono for H
 - `@musicd/server` - HTTP daemon server
 - `@musicd/cli` - CLI tool
 
-## Authentication
+## Configuration
 
-The daemon supports optional password authentication for API access:
+Configuration is split into two files in `~/.config/musicd/`:
 
-**Configuration:**
+### Server Config (`server.json`)
 
-- Add `daemon.password` field to config file, OR
-- Set `DAEMON_PASSWORD` environment variable
-
-**Behavior:**
-
-- If no password is configured: no authentication required (backward compatible)
-- If password is set: all API requests must include `Authorization: Bearer <password>` header
-- Health endpoint (`/api/health`) is always accessible without authentication
-
-**Security Notes:**
-
-- Use a strong, unique password for the daemon
-- Store the password securely (environment variable recommended for production)
-- The password is a shared secret (same for all clients)
-- Connection should use HTTPS in production environments
-
-**Example configuration:**
+Used by the daemon:
 
 ```json
 {
+  "jellyfin": {
+    "serverUrl": "http://localhost:8096"
+  },
   "daemon": {
     "port": 8765,
     "host": "127.0.0.1",
     "password": "your-secure-password-here"
+  },
+  "audio": {
+    "device": "default"
   }
 }
 ```
 
-**Example environment variable:**
+### CLI Config (`cli.json`)
+
+Connection profiles for the CLI:
+
+```json
+{
+  "defaultProfile": "local",
+  "profiles": {
+    "local": {
+      "host": "127.0.0.1",
+      "port": 8765,
+      "password": "your-secure-password-here"
+    }
+  }
+}
+```
+
+### CLI Connection Options
 
 ```bash
-export DAEMON_PASSWORD="your-secure-password-here"
+musicd status                              # Uses default profile
+musicd --profile home-server status        # Use named profile
+musicd --host 10.0.0.5 --port 8765 status  # Override with CLI args
 ```
+
+### Authentication
+
+- If `daemon.password` is set in server config, all API requests require `Authorization: Bearer <password>` header
+- Health endpoint (`/api/health`) is always accessible without authentication
+- CLI reads password from profile or `DAEMON_PASSWORD` environment variable
 
 ## Build, Lint, and Test Commands
 
@@ -110,6 +125,10 @@ Agent: I've added the new API endpoints. You can test them by:
 2. Running: curl http://localhost:8765/api/album/123
 ```
 
+### Releases
+
+**IMPORTANT**: Before performing any release, you MUST read `RELEASING.md` for the complete release process and instructions.
+
 ## Code Style Guidelines
 
 ### Import Conventions
@@ -117,14 +136,14 @@ Agent: I've added the new API endpoints. You can test them by:
 1. **Always use `.js` extensions** for local imports (TypeScript requirement for ES modules):
 
    ```typescript
-   import { loadConfig } from "../shared/config.js"; // ✓ Correct
-   import { loadConfig } from "../shared/config"; // ✗ Wrong
+   import { loadServerConfig } from "../shared/config.js"; // ✓ Correct
+   import { loadServerConfig } from "../shared/config"; // ✗ Wrong
    ```
 
 2. **Use package names for cross-package imports**:
 
    ```typescript
-   import { loadConfig } from "@musicd/shared"; // ✓ Correct for imports from other packages
+   import { loadServerConfig } from "@musicd/shared"; // ✓ Correct for imports from other packages
    import { MusicDaemonClient } from "@musicd/client"; // ✓ Correct
    import { JellyfinService } from "../services/jellyfin.js"; // ✓ Correct for same-package imports
    ```
@@ -140,14 +159,18 @@ Agent: I've added the new API endpoints. You can test them by:
    import type { Context } from "hono";
 
    // 3. Internal imports from workspace packages
-   import { loadConfig, JellyfinError, APP_VERSION } from "@musicd/shared";
+   import {
+     loadServerConfig,
+     JellyfinError,
+     APP_VERSION,
+   } from "@musicd/shared";
    import { MusicDaemonClient } from "@musicd/client";
 
    // 4. Same-package imports
    import { JellyfinService } from "./services/jellyfin.js";
 
    // 5. Type-only imports from internal modules
-   import type { PlayRequest, HealthResponse } from "@musicd/shared";
+   import type { PlayRequest, ServerConfig } from "@musicd/shared";
    ```
 
 4. **Use `type` imports** for type-only imports:
@@ -185,6 +208,7 @@ packages/
 ├── shared/       # Shared types, config, utilities
 │   └── src/
 │       ├── types.ts      # Type definitions
+│       ├── schemas.ts    # Zod validation schemas
 │       ├── constants.ts  # Application constants
 │       ├── config.ts     # Configuration loading
 │       ├── token-storage.ts  # Auth token management
