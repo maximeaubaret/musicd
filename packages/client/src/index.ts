@@ -123,7 +123,7 @@ export class MusicDaemonClient {
       if (error instanceof Error && error.message.includes("fetch failed")) {
         this.logger?.debug(`  Error: Connection failed`);
         throw new Error(
-          `Cannot connect to daemon at ${this.baseUrl}. Is it running? Start it with: bun run dev`,
+          `Cannot connect to daemon at ${this.baseUrl}. Is it running? Start it with: musicd-server`,
         );
       }
       this.logger?.debug(`  Error: ${error}`);

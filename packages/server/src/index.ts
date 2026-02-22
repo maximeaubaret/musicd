@@ -48,7 +48,7 @@ async function main() {
 
   const isConfigured = hasAuth();
   if (!isConfigured) {
-    console.warn("⚠ Not configured. Run 'bun run cli setup' to authenticate.");
+    console.warn("⚠ Not configured. Run 'musicd setup' to authenticate.");
     console.warn(
       "  Starting in setup mode - only /api/auth endpoint available.",
     );
@@ -102,7 +102,7 @@ async function main() {
       console.error(
         "  Your authentication may have expired. Try running setup again:",
       );
-      console.error("  bun run cli setup --force");
+      console.error("  musicd setup");
       process.exit(1);
     }
   }

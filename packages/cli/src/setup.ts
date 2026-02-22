@@ -99,10 +99,8 @@ export async function runSetup(): Promise<void> {
     const result = await client.authenticate(username, password);
 
     console.log(`✓ Successfully authenticated as ${result.user.name}`);
-    console.log("✓ Authentication token saved\n");
-    console.log(
-      "Setup complete! You can now start the daemon with: bun run dev",
-    );
+    console.log("✓ Authentication token saved");
+    console.log("\nSetup complete!");
   } catch (error) {
     console.error(
       "\n✗ Setup failed:",
