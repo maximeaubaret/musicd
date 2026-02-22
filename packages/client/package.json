@@ -1,6 +1,6 @@
 {
   "name": "@musicd/client",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "HTTP client for Jellyfin Music Daemon API",
   "type": "module",
   "private": true,
