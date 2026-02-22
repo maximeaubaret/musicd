@@ -24,6 +24,11 @@ const QueueAddRequestSchema = z.object({
  */
 function createAuthMiddleware(requiredPassword?: string) {
   return async (c: Context, next: Next) => {
+    // Health endpoint is always public
+    if (c.req.path === "/health") {
+      return next();
+    }
+
     // If no password is configured, skip authentication
     if (!requiredPassword) {
       return next();

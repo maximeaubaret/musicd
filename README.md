@@ -1,165 +1,153 @@
-# Jellyfin Music Daemon
+# musicd
 
-A TypeScript/Bun daemon that plays music from a Jellyfin server.
+> This project was vibecoded. Use at your own risk.
+
+A lightweight daemon that plays music from a [Jellyfin](https://jellyfin.org) server. Control playback via CLI or REST API.
 
 ## Features
 
-- Play music from Jellyfin by item ID
-- Queue management with auto-play next
-- Interactive search with expandable albums and artists
-- REST API for control
-- CLI tool for easy interaction
-- Configurable via JSON config and environment variables
-- Monorepo structure with separate packages for shared code, client, server, and CLI
+- Stream music from Jellyfin
+- Queue management with auto-play
+- REST API for integration
+- CLI with interactive search
+- Optional password authentication
 
-## Prerequisites
+## Requirements
 
-- [Bun](https://bun.sh) runtime installed
-- `mpv` installed (`sudo apt install mpv` on Ubuntu/Debian)
-- Access to a Jellyfin server with username and password
+- Linux (x64 or ARM64)
+- [ffplay](https://ffmpeg.org/) for audio playback (`sudo apt install ffmpeg`)
+- Access to a Jellyfin server
 
-## Setup
+## Installation
 
-1. Install dependencies and link workspace packages:
+### Pre-built Binaries
+
+Download the server (daemon) and CLI for your architecture:
 
 ```bash
+# x64
+curl -L https://github.com/maximeaubaret/musicd/releases/latest/download/musicd-server-linux-x64 -o musicd-server
+curl -L https://github.com/maximeaubaret/musicd/releases/latest/download/musicd-linux-x64 -o musicd
+chmod +x musicd-server musicd
+
+# ARM64
+curl -L https://github.com/maximeaubaret/musicd/releases/latest/download/musicd-server-linux-arm64 -o musicd-server
+curl -L https://github.com/maximeaubaret/musicd/releases/latest/download/musicd-linux-arm64 -o musicd
+chmod +x musicd-server musicd
+```
+
+### From Source
+
+Requires [Bun](https://bun.sh) runtime:
+
+```bash
+git clone https://github.com/maximeaubaret/musicd.git
+cd musicd
 bun install
 ```
 
-2. Configure Jellyfin server URL (optional):
+## Quick Start
 
-```bash
-# Edit .env or config/default.json to set your Jellyfin server URL
-# Default is http://localhost:8096
-```
+1. **Start the daemon:**
 
-3. Start the daemon:
+   ```bash
+   ./musicd-server              # pre-built
+   bun run dev                  # from source
+   ```
 
-```bash
-bun run dev
-```
+2. **Run setup** (first time only):
 
-4. Run the setup wizard (in another terminal):
+   ```bash
+   ./musicd setup               # pre-built
+   bun run cli setup            # from source
+   ```
 
-```bash
-bun run cli setup
-```
+3. **Play music:**
 
-The setup wizard will:
+   ```bash
+   ./musicd play "artist or song"
+   bun run cli play "artist or song"
+   ```
 
-- Prompt for your Jellyfin username and password
-- Authenticate with your Jellyfin server via the daemon
-- Save the authentication token securely to `.jellyfin-auth.json`
+## CLI Commands
 
-**Note**: Your username and password are only used during setup. The daemon uses the saved token for all subsequent operations.
-
-## Usage
-
-### Start the daemon
-
-```bash
-bun run dev
-```
-
-The daemon will start on `http://127.0.0.1:8765` by default.
-
-If you haven't run setup, the daemon will prompt you to do so.
-
-### CLI Commands
-
-```bash
-# Run initial setup (required before first use, daemon must be running)
-bun run cli setup
-
-# Reconfigure authentication
-bun run cli setup --force
-
-# Search and play music interactively
-bun run cli play "song or artist name"
-
-# Add to queue instead of replacing
-bun run cli play "song name" --queue
-
-# Search for music (non-interactive)
-bun run cli search "query" --limit 10
-
-# Stop playback
-bun run cli stop
-
-# Check playback status
-bun run cli status
-
-# Check daemon health
-bun run cli health
-
-# View and select from queue
-bun run cli queue
-
-# Clear queue
-bun run cli queue-clear
-
-# Skip to next song
-bun run cli next
-
-# Go to previous song
-bun run cli previous
-```
-
-### REST API
-
-- `POST /api/auth` - Authenticate with Jellyfin (used by setup)
-- `POST /api/play` - Play a Jellyfin item
-- `POST /api/stop` - Stop playback
-- `GET /api/status` - Get current playback status
-- `POST /api/queue/add` - Add items to queue
-- `GET /api/queue` - Get current queue
-- `POST /api/queue/clear` - Clear queue
-- `POST /api/queue/next` - Skip to next song
-- `POST /api/queue/previous` - Go to previous song
-- `POST /api/queue/play/:index` - Play from queue position
-- `POST /api/queue/remove/:index` - Remove item from queue
-- `GET /api/search` - Search for music
-- `GET /api/album/:id` - Get album details with tracks
-- `GET /api/artist/:id` - Get artist details with tracks
-- `GET /api/health` - Check daemon health
+| Command                | Description                       |
+| ---------------------- | --------------------------------- |
+| `setup`                | Authenticate with Jellyfin        |
+| `play <query>`         | Search and play interactively     |
+| `play <query> --queue` | Add to queue instead of replacing |
+| `search <query>`       | Search without playing            |
+| `stop`                 | Stop playback                     |
+| `status`               | Show current track                |
+| `queue`                | View and select from queue        |
+| `queue-clear`          | Clear the queue                   |
+| `next`                 | Skip to next track                |
+| `previous`             | Previous track                    |
+| `health`               | Check daemon status               |
 
 ## Configuration
 
-Configuration is loaded from `config/default.json` and can be overridden with environment variables:
+Create a config file at `~/.config/musicd/config.json`:
 
-- `JELLYFIN_URL` - Jellyfin server URL (default: http://localhost:8096)
-- `DAEMON_PORT` - Daemon HTTP port (default: 8765)
-- `DAEMON_HOST` - Daemon bind address (default: 127.0.0.1)
-- `AUDIO_DEVICE` - Audio output device (default: "default")
+```json
+{
+  "jellyfin": {
+    "serverUrl": "http://localhost:8096"
+  },
+  "daemon": {
+    "port": 8765,
+    "host": "127.0.0.1",
+    "password": "optional-api-password"
+  },
+  "audio": {
+    "device": "default"
+  }
+}
+```
 
-**Authentication**: Credentials are managed via the `setup` command and stored securely in `.jellyfin-auth.json`.
+Environment variables can override config values: `JELLYFIN_URL`, `DAEMON_PORT`, `DAEMON_HOST`, `DAEMON_PASSWORD`, `AUDIO_DEVICE`.
 
-## Project Structure
+### Security
 
-This project uses Bun workspaces with 4 packages:
+Set `daemon.password` when exposing the daemon to your network. The CLI reads `DAEMON_PASSWORD` from the environment to authenticate.
 
-- **`@musicd/shared`** - Shared types, configuration, and utilities
-- **`@musicd/client`** - HTTP client for daemon API
-- **`@musicd/server`** - HTTP daemon server
-- **`@musicd/cli`** - Command-line interface
+## REST API
+
+All endpoints require `Authorization: Bearer <password>` header if `DAEMON_PASSWORD` is set.
+
+| Method | Endpoint              | Description                       |
+| ------ | --------------------- | --------------------------------- |
+| POST   | `/api/auth`           | Authenticate with Jellyfin        |
+| POST   | `/api/play`           | Play an item `{"itemId": "..."}`  |
+| POST   | `/api/stop`           | Stop playback                     |
+| GET    | `/api/status`         | Playback status                   |
+| POST   | `/api/queue/add`      | Add to queue `{"itemIds": [...]}` |
+| GET    | `/api/queue`          | Get queue                         |
+| POST   | `/api/queue/clear`    | Clear queue                       |
+| POST   | `/api/queue/next`     | Next track                        |
+| POST   | `/api/queue/previous` | Previous track                    |
+| GET    | `/api/search?q=...`   | Search music                      |
+| GET    | `/api/health`         | Health check (no auth required)   |
 
 ## Development
 
 ```bash
-# Install dependencies and link workspace packages
-bun install
-
-# Format code
-bun run format
-
-# Lint code
-bun run lint
-
-# Clean build artifacts (if any were generated)
-bun run clean
+bun install          # Install dependencies
+bun run dev          # Start daemon with watch mode
+bun run cli <cmd>    # Run CLI commands
+bun run format       # Format code
+bun run lint         # Lint code
 ```
 
-**Note**: No build step required! Bun runs TypeScript directly.
+### Project Structure
+
+```
+packages/
+  shared/   # Types, config, utilities
+  client/   # HTTP client library
+  server/   # Daemon server
+  cli/      # Command-line interface
+```
 
 ## License
 

@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Update APP_VERSION
+        run: |
+          sed -i 's/export const APP_VERSION = "[^"]*";/export const APP_VERSION = "${{ steps.version.outputs.VERSION }}";/' packages/shared/src/constants.ts
+
+      - name: Build CLI (x64)
+        run: bun build --compile --target=bun-linux-x64 --minify packages/cli/src/index.ts --outfile bin/musicd-linux-x64
+
+      - name: Build CLI (ARM64)
+        run: bun build --compile --target=bun-linux-arm64 --minify packages/cli/src/index.ts --outfile bin/musicd-linux-arm64
+
+      - name: Build Server (x64)
+        run: bun build --compile --target=bun-linux-x64 --minify packages/server/src/index.ts --outfile bin/musicd-server-linux-x64
+
+      - name: Build Server (ARM64)
+        run: bun build --compile --target=bun-linux-arm64 --minify packages/server/src/index.ts --outfile bin/musicd-server-linux-arm64
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/musicd-linux-x64
+            bin/musicd-linux-arm64
+            bin/musicd-server-linux-x64
+            bin/musicd-server-linux-arm64
+          generate_release_notes: true
