@@ -10,17 +10,20 @@ import { runSetup } from "./setup.js";
 
 const program = new Command();
 
-// Load config to get daemon URL
+// Load config to get daemon URL and password
 let daemonUrl: string;
+let daemonPassword: string | undefined;
 try {
   const config = loadConfig();
   daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
+  daemonPassword = config.daemon.password;
 } catch (error) {
   daemonUrl = "http://127.0.0.1:8765";
+  daemonPassword = undefined;
 }
 
 // Create client instance
-const client = new MusicDaemonClient(daemonUrl);
+const client = new MusicDaemonClient(daemonUrl, daemonPassword);
 
 /**
  * Format duration in seconds to MM:SS

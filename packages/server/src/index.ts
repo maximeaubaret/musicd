@@ -25,6 +25,11 @@ async function main() {
     console.log(`  - Jellyfin: ${config.jellyfin.serverUrl}`);
     console.log(`  - Daemon: ${config.daemon.host}:${config.daemon.port}`);
     console.log(`  - Audio device: ${config.audio.device}`);
+    if (config.daemon.password) {
+      console.log(`  - Authentication: enabled (password required)`);
+    } else {
+      console.log(`  - Authentication: disabled (no password set)`);
+    }
   } catch (error) {
     console.error("✗ Failed to load configuration:", error);
     process.exit(1);
@@ -72,7 +77,15 @@ async function main() {
   app.use("*", logger());
 
   // Mount API routes
-  app.route("/api", createApiRoutes(jellyfinService, playerService, startTime));
+  app.route(
+    "/api",
+    createApiRoutes(
+      jellyfinService,
+      playerService,
+      startTime,
+      config.daemon.password,
+    ),
+  );
 
   // Root endpoint
   app.get("/", (c) => {

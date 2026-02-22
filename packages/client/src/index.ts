@@ -28,7 +28,10 @@ export type {
  * HTTP client for Jellyfin Music Daemon API
  */
 export class MusicDaemonClient {
-  constructor(private baseUrl: string) {}
+  constructor(
+    private baseUrl: string,
+    private password?: string,
+  ) {}
 
   /**
    * Make HTTP request to daemon API
@@ -39,15 +42,35 @@ export class MusicDaemonClient {
     body?: any,
   ): Promise<T> {
     try {
+      const headers: Record<string, string> = {};
+
+      // Add Content-Type for POST requests with body
+      if (body) {
+        headers["Content-Type"] = "application/json";
+      }
+
+      // Add Authorization header if password is configured
+      if (this.password) {
+        headers["Authorization"] = `Bearer ${this.password}`;
+      }
+
       const response = await fetch(`${this.baseUrl}/api${endpoint}`, {
         method,
-        headers: body ? { "Content-Type": "application/json" } : {},
+        headers,
         body: body ? JSON.stringify(body) : undefined,
       });
 
       const data = (await response.json()) as any;
 
       if (!response.ok) {
+        // Special handling for 401 errors
+        if (response.status === 401) {
+          throw new Error(
+            `Authentication failed: ${data.error || "Invalid or missing password"}. ` +
+              `Check DAEMON_PASSWORD in your config or environment.`,
+          );
+        }
+
         throw new Error(
           data.error || `Request failed with status ${response.status}`,
         );

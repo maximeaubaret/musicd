@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "bun --watch packages/server/src/index.ts",
+    "server": "bun packages/server/src/index.ts",
     "cli": "bun packages/cli/src/index.ts",
     "build:cli": "bun run --filter @musicd/cli build:cli",
     "format": "prettier --write .",

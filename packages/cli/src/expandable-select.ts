@@ -120,7 +120,7 @@ function normalizeChoices<Value>(
   });
 }
 
-export default (createPrompt(
+export default createPrompt(
   <Value>(
     config: ExpandableSelectConfig<Value>,
     done: (value: Value | null) => void,
@@ -331,4 +331,4 @@ export default (createPrompt(
 
     return `${lines}${cursorHide}`;
   },
-)) as any;
+) as any;

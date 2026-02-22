@@ -25,6 +25,7 @@ const ConfigSchema = z.object({
   daemon: z.object({
     port: z.number().int().min(1).max(65535),
     host: z.string().min(1),
+    password: z.string().optional(),
   }),
   audio: z.object({
     device: z.string().min(1),
@@ -67,6 +68,7 @@ export function loadConfig(): Config {
     daemon: {
       port: DEFAULT_DAEMON_PORT,
       host: DEFAULT_DAEMON_HOST,
+      password: undefined,
     },
     audio: {
       device: DEFAULT_AUDIO_DEVICE,
@@ -113,6 +115,8 @@ export function loadConfig(): Config {
         process.env.DAEMON_HOST ||
         fileConfig.daemon?.host ||
         DEFAULT_DAEMON_HOST,
+      password:
+        process.env.DAEMON_PASSWORD || fileConfig.daemon?.password || undefined,
     },
     audio: {
       device:

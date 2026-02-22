@@ -110,7 +110,7 @@ function normalizeChoices<Value>(
   });
 }
 
-export default (createPrompt(
+export default createPrompt(
   <Value>(config: SelectConfig<Value>, done: (value: Value | null) => void) => {
     const { loop = true, pageSize = 7 } = config;
     const theme = makeTheme<SelectTheme>(selectTheme, config.theme);
@@ -251,4 +251,4 @@ export default (createPrompt(
 
     return `${lines}${cursorHide}`;
   },
-)) as any;
+) as any;

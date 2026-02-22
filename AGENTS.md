@@ -13,6 +13,46 @@ A TypeScript/Bun daemon that plays music from a Jellyfin server. Uses Hono for H
 - `@musicd/server` - HTTP daemon server
 - `@musicd/cli` - CLI tool
 
+## Authentication
+
+The daemon supports optional password authentication for API access:
+
+**Configuration:**
+
+- Add `daemon.password` field to config file, OR
+- Set `DAEMON_PASSWORD` environment variable
+
+**Behavior:**
+
+- If no password is configured: no authentication required (backward compatible)
+- If password is set: all API requests must include `Authorization: Bearer <password>` header
+- Health endpoint (`/api/health`) is always accessible without authentication
+
+**Security Notes:**
+
+- Use a strong, unique password for the daemon
+- Store the password securely (environment variable recommended for production)
+- The password is a shared secret (same for all clients)
+- Connection should use HTTPS in production environments
+
+**Example configuration:**
+
+```json
+{
+  "daemon": {
+    "port": 8765,
+    "host": "127.0.0.1",
+    "password": "your-secure-password-here"
+  }
+}
+```
+
+**Example environment variable:**
+
+```bash
+export DAEMON_PASSWORD="your-secure-password-here"
+```
+
 ## Build, Lint, and Test Commands
 
 ### Development

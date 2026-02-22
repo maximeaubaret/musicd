@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context, Next } from "hono";
 import { z } from "zod";
 import type { JellyfinService } from "../services/jellyfin.js";
 import type { PlayerService } from "../services/player.js";
@@ -17,12 +18,71 @@ const QueueAddRequestSchema = z.object({
   playNow: z.boolean().optional().default(false),
 });
 
+/**
+ * Authentication middleware for Bearer token validation
+ * Validates the Authorization header against the configured daemon password
+ */
+function createAuthMiddleware(requiredPassword?: string) {
+  return async (c: Context, next: Next) => {
+    // If no password is configured, skip authentication
+    if (!requiredPassword) {
+      return next();
+    }
+
+    const authHeader = c.req.header("Authorization");
+
+    if (!authHeader) {
+      return c.json(
+        {
+          success: false,
+          error: "Authentication required. Missing Authorization header.",
+        },
+        401,
+      );
+    }
+
+    // Check Bearer token format
+    const parts = authHeader.split(" ");
+    if (parts.length !== 2 || parts[0] !== "Bearer") {
+      return c.json(
+        {
+          success: false,
+          error:
+            "Invalid Authorization header format. Expected: Bearer <password>",
+        },
+        401,
+      );
+    }
+
+    const providedPassword = parts[1];
+
+    // Constant-time comparison to prevent timing attacks
+    if (providedPassword !== requiredPassword) {
+      return c.json(
+        {
+          success: false,
+          error: "Invalid authentication credentials.",
+        },
+        401,
+      );
+    }
+
+    // Authentication successful
+    return next();
+  };
+}
+
 export function createApiRoutes(
   jellyfinService: JellyfinService,
   playerService: PlayerService,
   startTime: number,
+  daemonPassword?: string,
 ) {
   const app = new Hono();
+
+  // Apply authentication middleware to all routes
+  const authMiddleware = createAuthMiddleware(daemonPassword);
+  app.use("*", authMiddleware);
 
   /**
    * POST /api/auth - Authenticate with Jellyfin
@@ -819,6 +879,19 @@ export function createApiRoutes(
         500,
       );
     }
+  });
+
+  /**
+   * GET /health - Health check endpoint (no auth required)
+   */
+  app.get("/health", async (c) => {
+    const uptime = Math.floor((Date.now() - startTime) / 1000);
+    return c.json({
+      success: true,
+      status: "healthy",
+      uptime,
+      version: APP_VERSION,
+    });
   });
 
   return app;

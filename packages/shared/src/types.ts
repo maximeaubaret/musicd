@@ -8,6 +8,7 @@ export interface JellyfinConfig {
 export interface DaemonConfig {
   port: number;
   host: string;
+  password?: string; // Optional shared secret for daemon API authentication
 }
 
 export interface AudioConfig {
@@ -113,5 +114,12 @@ export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ConfigError";
+  }
+}
+
+export class AuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthenticationError";
   }
 }
