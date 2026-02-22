@@ -1,6 +1,6 @@
 {
   "name": "jellyfin-music-daemon",
-  "version": "0.2.5",
+  "version": "1.0.0",
   "description": "A daemon that plays music from Jellyfin",
   "type": "module",
   "private": true,

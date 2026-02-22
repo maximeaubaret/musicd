@@ -1,24 +1,104 @@
-// Configuration types
+// ============================================
+// Server Configuration Types
+// ============================================
+
+/** Server-side Jellyfin configuration */
 export interface JellyfinConfig {
   serverUrl: string;
-  username?: string;
+}
+
+/** Audio playback configuration */
+export interface AudioConfig {
+  device?: string;
+}
+
+/** Server binding configuration */
+export interface ServerBindingConfig {
+  /** Host to bind to (default: 127.0.0.1) */
+  host: string;
+  /** Port to listen on (default: 8765) */
+  port: number;
+  /** Optional password for API authentication */
   password?: string;
 }
 
+/** Server configuration */
+export interface ServerConfig {
+  jellyfin: JellyfinConfig;
+  daemon: ServerBindingConfig;
+  audio?: AudioConfig;
+}
+
+// ============================================
+// CLI Configuration Types
+// ============================================
+
+/** A named profile for connecting to a musicd server */
+export interface DaemonProfile {
+  /** Daemon host address */
+  host: string;
+  /** Daemon port */
+  port: number;
+  /** Optional authentication password */
+  password?: string;
+}
+
+/** CLI configuration with connection profiles */
+export interface CliConfig {
+  /** Default profile name to use when none specified */
+  defaultProfile?: string;
+  /** Named connection profiles */
+  profiles: Record<string, DaemonProfile>;
+}
+
+/** Resolved daemon connection settings (after applying CLI args) */
+export interface ResolvedDaemonConnection {
+  host: string;
+  port: number;
+  password?: string;
+  /** Which profile was used (undefined if CLI args only) */
+  profileName?: string;
+}
+
+// ============================================
+// Legacy Configuration Types (for migration)
+// ============================================
+
+/** @deprecated Old unified config format - for migration only */
+export interface LegacyConfig {
+  jellyfin?: {
+    serverUrl?: string;
+    username?: string;
+    password?: string;
+  };
+  daemon?: {
+    port?: number;
+    host?: string;
+    password?: string;
+  };
+  audio?: {
+    device?: string;
+  };
+}
+
+/**
+ * @deprecated Use ServerConfig instead
+ * Old DaemonConfig interface kept for backwards compatibility
+ */
 export interface DaemonConfig {
   port: number;
   host: string;
-  password?: string; // Optional shared secret for daemon API authentication
+  password?: string;
 }
 
-export interface AudioConfig {
-  device: string;
-}
-
+/**
+ * @deprecated Use ServerConfig instead
+ * Old unified Config interface kept for backwards compatibility
+ */
 export interface Config {
-  jellyfin: JellyfinConfig;
+  jellyfin: JellyfinConfig & { username?: string; password?: string };
   daemon: DaemonConfig;
-  audio: AudioConfig;
+  audio: AudioConfig & { device: string };
 }
 
 // Jellyfin API types

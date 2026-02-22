@@ -4,9 +4,10 @@ import chalk from "chalk";
 import select from "./select-with-quit.js";
 import expandableSelect from "./expandable-select.js";
 import {
-  loadConfig,
+  resolveDaemonConnection,
+  checkNeedsMigration,
+  migrateLegacyConfig,
   APP_VERSION,
-  getConfigResolutionInfo,
 } from "@musicd/shared";
 import type { PlaybackStatus } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
@@ -15,71 +16,66 @@ import { logger } from "./logger.js";
 
 const program = new Command();
 
-// Add global --print-logs option
-program.option("--print-logs", "Enable debug logging");
+// Global options for daemon connection
+program
+  .option("--print-logs", "Enable debug logging")
+  .option("--host <host>", "Daemon host address")
+  .option("--port <port>", "Daemon port", (val) => parseInt(val, 10))
+  .option("--password <password>", "Daemon password")
+  .option("-p, --profile <name>", "Use named connection profile");
 
-// Hook to enable logger before any command runs
+// Client instance (lazily initialized per command)
+let _client: MusicDaemonClient | null = null;
+
+/**
+ * Get or create the daemon client based on global options
+ */
+function getClient(): MusicDaemonClient {
+  if (_client) return _client;
+
+  const opts = program.opts();
+  const connection = resolveDaemonConnection({
+    host: opts.host,
+    port: opts.port,
+    password: opts.password,
+    profile: opts.profile,
+  });
+
+  const baseUrl = `http://${connection.host}:${connection.port}`;
+
+  logger.debug("Daemon connection:");
+  logger.debug(`  URL: ${baseUrl}`);
+  logger.debug(`  Profile: ${connection.profileName || "(none)"}`);
+  logger.debug(`  Password: ${connection.password ? "(set)" : "(not set)"}`);
+
+  _client = new MusicDaemonClient(baseUrl, connection.password);
+
+  if (logger.isEnabled()) {
+    _client.setLogger(logger);
+  }
+
+  return _client;
+}
+
+// Hook to enable logger and run migration before any command
 program.hook("preAction", (thisCommand) => {
   const opts = thisCommand.optsWithGlobals();
   if (opts.printLogs) {
     logger.enable();
   }
-});
 
-// Load config to get daemon URL and password
-let daemonUrl: string;
-let daemonPassword: string | undefined;
-
-function initializeConfig(): void {
-  const info = getConfigResolutionInfo();
-
-  logger.debug("Config resolution:");
-  logger.debug(`  Config path: ${info.xdgConfigPath}`);
-
-  if (info.configFile) {
-    logger.info(`Config loaded from: ${info.configFile}`);
-  } else {
-    logger.warn("No config file found, using defaults");
-  }
-
-  if (info.envOverrides.length > 0) {
-    logger.debug(`Environment overrides: ${info.envOverrides.join(", ")}`);
-  }
-
-  try {
-    const config = loadConfig();
-    daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
-    daemonPassword = config.daemon.password;
-    logger.debug(`Daemon URL: ${daemonUrl}`);
-    logger.debug(`Daemon password: ${daemonPassword ? "(set)" : "(not set)"}`);
-  } catch (error) {
-    logger.warn(`Config load error: ${error}`);
-    daemonUrl = "http://127.0.0.1:8765";
-    daemonPassword = undefined;
-  }
-}
-
-// Initialize with defaults first (will be re-initialized in preAction if --print-logs is set)
-try {
-  const config = loadConfig();
-  daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
-  daemonPassword = config.daemon.password;
-} catch (error) {
-  daemonUrl = "http://127.0.0.1:8765";
-  daemonPassword = undefined;
-}
-
-// Hook to log config info and set up client logger when --print-logs is enabled
-program.hook("preAction", () => {
-  if (logger.isEnabled()) {
-    initializeConfig();
-    // Pass the logger to the client for request logging
-    client.setLogger(logger);
+  // Check for and run migration if needed
+  if (checkNeedsMigration()) {
+    console.log("📦 Detected legacy config.json, migrating to new format...");
+    const result = migrateLegacyConfig();
+    if (result.migrated) {
+      console.log("✓ Migration complete!");
+      for (const warning of result.warnings) {
+        console.log(`  ⚠ ${warning}`);
+      }
+    }
   }
 });
-
-// Create client instance (will use the initialized values)
-const client = new MusicDaemonClient(daemonUrl, daemonPassword);
 
 /**
  * Format duration in seconds to MM:SS
@@ -100,7 +96,13 @@ program
   .command("setup")
   .description("Configure Jellyfin authentication")
   .action(async () => {
-    await runSetup();
+    const opts = program.opts();
+    await runSetup({
+      host: opts.host,
+      port: opts.port,
+      password: opts.password,
+      profile: opts.profile,
+    });
   });
 
 program
@@ -127,7 +129,7 @@ program
       // If --id is provided, skip search and play directly
       if (options.id) {
         // Play directly by ID - we'll queue it and let the daemon handle it
-        const result = await client.addToQueue([options.id], {
+        const result = await getClient().addToQueue([options.id], {
           clearQueue: !addToQueue,
           playNow: !addToQueue,
         });
@@ -155,7 +157,7 @@ program
 
       // Search for music
       process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
-      const searchResult = await client.search(query!);
+      const searchResult = await getClient().search(query!);
 
       if (searchResult.count === 0) {
         console.log(chalk.yellow("✗ No results found"));
@@ -218,7 +220,7 @@ program
           onExpand: async (parentItem: any) => {
             // Fetch tracks for this album or artist using proper API endpoints
             if (parentItem.type === "MusicAlbum") {
-              const albumResult = await client.getAlbum(parentItem.id);
+              const albumResult = await getClient().getAlbum(parentItem.id);
               return albumResult.tracks.map((track: any) => ({
                 name: formatItem(track, true),
                 value: track,
@@ -227,7 +229,7 @@ program
                 id: track.id,
               }));
             } else if (parentItem.type === "MusicArtist") {
-              const artistResult = await client.getArtist(parentItem.id);
+              const artistResult = await getClient().getArtist(parentItem.id);
               return artistResult.tracks.map((track: any) => ({
                 name: formatItem(track, true),
                 value: track,
@@ -250,7 +252,7 @@ program
       // Handle different item types
       if (selectedItem.type === "Audio") {
         // It's a track - add to queue
-        const result = await client.addToQueue([selectedItem.id], {
+        const result = await getClient().addToQueue([selectedItem.id], {
           clearQueue: !addToQueue,
           playNow: !addToQueue,
         });
@@ -288,7 +290,7 @@ program
           ),
         );
 
-        const result = await client.addToQueue([selectedItem.id], {
+        const result = await getClient().addToQueue([selectedItem.id], {
           clearQueue: !addToQueue,
           playNow: !addToQueue,
         });
@@ -331,7 +333,7 @@ program
   .description("Pause playback")
   .action(async () => {
     try {
-      await client.pause();
+      await getClient().pause();
       console.log(chalk.yellow("⏸  Playback paused"));
     } catch (error) {
       console.error(
@@ -347,7 +349,7 @@ program
   .description("Resume playback")
   .action(async () => {
     try {
-      await client.resume();
+      await getClient().resume();
       console.log(chalk.green("▶ Playback resumed"));
     } catch (error) {
       console.error(
@@ -363,7 +365,7 @@ program
   .description("Stop playback")
   .action(async () => {
     try {
-      await client.stop();
+      await getClient().stop();
       console.log("✓ Playback stopped");
     } catch (error) {
       console.error(
@@ -388,7 +390,7 @@ program
         process.exit(1);
       }
 
-      const result = await client.search(query, limit);
+      const result = await getClient().search(query, limit);
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -456,7 +458,7 @@ program
   .description("Show current playback status")
   .action(async () => {
     try {
-      const status: PlaybackStatus = await client.status();
+      const status: PlaybackStatus = await getClient().status();
 
       if (status.state === "stopped") {
         console.log(chalk.gray("⏸  No playback in progress"));
@@ -517,7 +519,7 @@ program
   .description("Show queue - select a track to play it")
   .action(async () => {
     try {
-      const result = await client.getQueue();
+      const result = await getClient().getQueue();
 
       if (result.count === 0) {
         console.log(chalk.yellow("Queue is empty"));
@@ -573,7 +575,7 @@ program
 
       // Play from the selected queue position
       try {
-        const playResult = await client.playFromQueue(selectedIndex);
+        const playResult = await getClient().playFromQueue(selectedIndex);
         if (playResult.item) {
           console.log(
             chalk.green("▶ Playing:"),
@@ -606,7 +608,7 @@ program
   .description("Clear the queue")
   .action(async () => {
     try {
-      await client.clearQueue();
+      await getClient().clearQueue();
       console.log(chalk.green("✓ Queue cleared"));
     } catch (error) {
       console.error(
@@ -622,7 +624,7 @@ program
   .description("Skip to next song in queue")
   .action(async () => {
     try {
-      await client.playNext();
+      await getClient().playNext();
       console.log(chalk.green("⏭  Skipped to next song"));
     } catch (error) {
       console.error(
@@ -638,7 +640,7 @@ program
   .description("Go to previous song in queue")
   .action(async () => {
     try {
-      await client.playPrevious();
+      await getClient().playPrevious();
       console.log(chalk.green("⏮  Went to previous song"));
     } catch (error) {
       console.error(

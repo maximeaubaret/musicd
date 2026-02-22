@@ -1,6 +1,14 @@
 #!/usr/bin/env bun
 import { Hono } from "hono";
-import { loadConfig, hasAuth, getConfigResolutionInfo } from "@musicd/shared";
+import {
+  loadServerConfig,
+  hasAuth,
+  checkNeedsMigration,
+  migrateLegacyConfig,
+  getServerConfigPath,
+  DEFAULT_AUDIO_DEVICE,
+} from "@musicd/shared";
+import type { ServerConfig } from "@musicd/shared";
 import { JellyfinService } from "./services/jellyfin.js";
 import { PlayerService } from "./services/player.js";
 import { createApiRoutes } from "./api/routes.js";
@@ -29,21 +37,27 @@ if (printLogs) {
 async function main() {
   console.log("🎵 Starting Jellyfin Music Daemon...");
 
-  // Log config resolution if --print-logs is enabled
-  if (logger.isEnabled()) {
-    const info = getConfigResolutionInfo();
-    logger.debug("Config resolution:");
-    logger.debug(`  Config path: ${info.xdgConfigPath}`);
-
-    if (info.configFile) {
-      logger.info(`Config loaded from: ${info.configFile}`);
+  // Check for and run migration if needed
+  if (checkNeedsMigration()) {
+    console.log("📦 Detected legacy config.json, migrating to new format...");
+    const result = migrateLegacyConfig();
+    if (result.migrated) {
+      console.log("✓ Migration complete!");
+      for (const warning of result.warnings) {
+        console.log(`  ⚠ ${warning}`);
+      }
     } else {
-      logger.warn("No config file found, using defaults");
+      console.warn("⚠ Migration failed:");
+      for (const warning of result.warnings) {
+        console.warn(`  ${warning}`);
+      }
     }
+  }
 
-    if (info.envOverrides.length > 0) {
-      logger.debug(`Environment overrides: ${info.envOverrides.join(", ")}`);
-    }
+  // Log config path if --print-logs is enabled
+  if (logger.isEnabled()) {
+    logger.debug("Config resolution:");
+    logger.debug(`  Server config path: ${getServerConfigPath()}`);
   }
 
   const isConfigured = hasAuth();
@@ -55,13 +69,15 @@ async function main() {
   }
 
   // Load configuration
-  let config;
+  let config: ServerConfig;
   try {
-    config = loadConfig();
+    config = loadServerConfig();
     console.log(`✓ Configuration loaded`);
     console.log(`  - Jellyfin: ${config.jellyfin.serverUrl}`);
     console.log(`  - Daemon: ${config.daemon.host}:${config.daemon.port}`);
-    console.log(`  - Audio device: ${config.audio.device}`);
+    console.log(
+      `  - Audio device: ${config.audio?.device || DEFAULT_AUDIO_DEVICE}`,
+    );
     if (config.daemon.password) {
       console.log(`  - Authentication: enabled (password required)`);
     } else {
@@ -69,12 +85,15 @@ async function main() {
     }
   } catch (error) {
     console.error("✗ Failed to load configuration:", error);
+    console.error("  Run 'musicd setup' to configure the server.");
     process.exit(1);
   }
 
   // Initialize services
   const jellyfinService = new JellyfinService(config.jellyfin);
-  const playerService = new PlayerService(config.audio.device);
+  const playerService = new PlayerService(
+    config.audio?.device || DEFAULT_AUDIO_DEVICE,
+  );
   const startTime = Date.now();
 
   // Configure player service with stream URL getter for queue auto-play

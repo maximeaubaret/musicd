@@ -1,77 +1,437 @@
 import { z } from "zod";
 import dotenv from "dotenv";
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+} from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
-import type { Config } from "./types.js";
+import type {
+  CliConfig,
+  ServerConfig,
+  DaemonProfile,
+  ResolvedDaemonConnection,
+  LegacyConfig,
+  Config,
+} from "./types.js";
 import { ConfigError } from "./types.js";
+import {
+  CliConfigSchema,
+  ServerConfigSchema,
+  LegacyConfigSchema,
+} from "./schemas.js";
 import {
   DEFAULT_DAEMON_PORT,
   DEFAULT_DAEMON_HOST,
   DEFAULT_AUDIO_DEVICE,
   DEFAULT_JELLYFIN_URL,
+  DEFAULT_PROFILE_NAME,
   XDG_CONFIG_DIR,
   XDG_CONFIG_FILE,
+  CLI_CONFIG_FILE,
+  SERVER_CONFIG_FILE,
 } from "./constants.js";
+
+// ============================================
+// Path Utilities
+// ============================================
+
+/**
+ * Get XDG config home directory
+ */
+export function getXdgConfigHome(): string {
+  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+}
+
+/**
+ * Get musicd config directory
+ */
+export function getMusicdConfigDir(): string {
+  return join(getXdgConfigHome(), XDG_CONFIG_DIR);
+}
+
+/**
+ * Get CLI config file path
+ */
+export function getCliConfigPath(): string {
+  return join(getMusicdConfigDir(), CLI_CONFIG_FILE);
+}
+
+/**
+ * Get Server config file path
+ */
+export function getServerConfigPath(): string {
+  return join(getMusicdConfigDir(), SERVER_CONFIG_FILE);
+}
+
+/**
+ * Get legacy config file path (for migration)
+ */
+export function getLegacyConfigPath(): string {
+  return join(getMusicdConfigDir(), XDG_CONFIG_FILE);
+}
+
+/**
+ * @deprecated Use getCliConfigPath() or getServerConfigPath() instead
+ */
+export function getXdgConfigPath(): string {
+  return getLegacyConfigPath();
+}
+
+/**
+ * @deprecated Use getMusicdConfigDir() instead
+ */
+export function getXdgConfigDir(): string {
+  return getMusicdConfigDir();
+}
+
+// ============================================
+// CLI Config Functions
+// ============================================
+
+/**
+ * Load CLI configuration from file
+ * Returns empty config with no profiles if file doesn't exist
+ */
+export function loadCliConfig(): CliConfig {
+  const configPath = getCliConfigPath();
+
+  if (!existsSync(configPath)) {
+    return { profiles: {} };
+  }
+
+  try {
+    const content = readFileSync(configPath, "utf-8");
+    const parsed = JSON.parse(content);
+    return CliConfigSchema.parse(parsed);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const messages = error.errors
+        .map((e) => `${e.path.join(".")}: ${e.message}`)
+        .join(", ");
+      throw new ConfigError(`Invalid CLI config: ${messages}`);
+    }
+    throw new ConfigError(`Failed to load CLI config: ${error}`);
+  }
+}
+
+/**
+ * Save CLI configuration to file
+ */
+export function saveCliConfig(config: CliConfig): void {
+  const configPath = getCliConfigPath();
+  const configDir = dirname(configPath);
+
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  }
+
+  // Validate before saving
+  CliConfigSchema.parse(config);
+  writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+}
+
+/**
+ * Get a specific profile from CLI config
+ */
+export function getProfile(
+  config: CliConfig,
+  profileName?: string,
+): DaemonProfile | undefined {
+  const name = profileName || config.defaultProfile;
+  if (!name) return undefined;
+  return config.profiles[name];
+}
+
+/** CLI argument overrides */
+export interface CliConnectionArgs {
+  host?: string;
+  port?: number;
+  password?: string;
+  profile?: string;
+}
+
+/**
+ * Resolve daemon connection from CLI config + CLI args + env vars
+ * Priority (highest to lowest):
+ * 1. CLI arguments (--host, --port, --password)
+ * 2. Environment variables (DAEMON_HOST, DAEMON_PORT, DAEMON_PASSWORD)
+ * 3. Named profile (--profile or defaultProfile)
+ * 4. Built-in defaults
+ */
+export function resolveDaemonConnection(
+  args: CliConnectionArgs = {},
+): ResolvedDaemonConnection {
+  // Load .env file
+  dotenv.config();
+
+  const config = loadCliConfig();
+
+  // Get profile settings (if any)
+  const profileName = args.profile || config.defaultProfile;
+  const profile = profileName ? config.profiles[profileName] : undefined;
+
+  // If user explicitly requested a profile that doesn't exist, error out
+  if (args.profile && !profile) {
+    const available = Object.keys(config.profiles);
+    if (available.length > 0) {
+      throw new ConfigError(
+        `Profile '${args.profile}' not found. Available profiles: ${available.join(", ")}`,
+      );
+    } else {
+      throw new ConfigError(
+        `Profile '${args.profile}' not found. No profiles configured in ${getCliConfigPath()}`,
+      );
+    }
+  }
+
+  // Layer: defaults -> profile -> env -> CLI args (CLI wins)
+  const host =
+    args.host ??
+    process.env.DAEMON_HOST ??
+    profile?.host ??
+    DEFAULT_DAEMON_HOST;
+
+  const port =
+    args.port ??
+    (process.env.DAEMON_PORT
+      ? parseInt(process.env.DAEMON_PORT, 10)
+      : undefined) ??
+    profile?.port ??
+    DEFAULT_DAEMON_PORT;
+
+  const password =
+    args.password ?? process.env.DAEMON_PASSWORD ?? profile?.password;
+
+  return {
+    host,
+    port,
+    password,
+    profileName: profile ? profileName : undefined,
+  };
+}
+
+// ============================================
+// Server Config Functions
+// ============================================
+
+/**
+ * Load server configuration from file
+ * Throws if config file doesn't exist
+ */
+export function loadServerConfig(): ServerConfig {
+  // Load .env file
+  dotenv.config();
+
+  const configPath = getServerConfigPath();
+
+  if (!existsSync(configPath)) {
+    throw new ConfigError(
+      `Server config not found at ${configPath}. Run 'musicd setup' to configure.`,
+    );
+  }
+
+  try {
+    const content = readFileSync(configPath, "utf-8");
+    const parsed = JSON.parse(content);
+
+    // Apply environment variable overrides
+    if (process.env.JELLYFIN_SERVER_URL || process.env.JELLYFIN_URL) {
+      parsed.jellyfin = parsed.jellyfin || {};
+      parsed.jellyfin.serverUrl =
+        process.env.JELLYFIN_SERVER_URL || process.env.JELLYFIN_URL;
+    }
+    if (process.env.DAEMON_BIND_HOST) {
+      parsed.daemon = parsed.daemon || {};
+      parsed.daemon.host = process.env.DAEMON_BIND_HOST;
+    }
+    if (process.env.DAEMON_BIND_PORT) {
+      parsed.daemon = parsed.daemon || {};
+      parsed.daemon.port = parseInt(process.env.DAEMON_BIND_PORT, 10);
+    }
+    if (process.env.DAEMON_PASSWORD) {
+      parsed.daemon = parsed.daemon || {};
+      parsed.daemon.password = process.env.DAEMON_PASSWORD;
+    }
+    if (process.env.AUDIO_DEVICE) {
+      parsed.audio = parsed.audio || {};
+      parsed.audio.device = process.env.AUDIO_DEVICE;
+    }
+
+    return ServerConfigSchema.parse(parsed);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const messages = error.errors
+        .map((e) => `${e.path.join(".")}: ${e.message}`)
+        .join(", ");
+      throw new ConfigError(`Invalid server config: ${messages}`);
+    }
+    if (error instanceof ConfigError) {
+      throw error;
+    }
+    throw new ConfigError(`Failed to load server config: ${error}`);
+  }
+}
+
+/**
+ * Save server configuration to file
+ */
+export function saveServerConfig(config: ServerConfig): void {
+  const configPath = getServerConfigPath();
+  const configDir = dirname(configPath);
+
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  }
+
+  // Validate before saving
+  ServerConfigSchema.parse(config);
+  writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+}
+
+// ============================================
+// Migration Functions
+// ============================================
+
+export interface MigrationResult {
+  migrated: boolean;
+  cliConfig?: CliConfig;
+  serverConfig?: ServerConfig;
+  warnings: string[];
+}
+
+/**
+ * Check if legacy config needs migration
+ * Returns true if legacy config.json exists and new server.json doesn't
+ */
+export function checkNeedsMigration(): boolean {
+  const legacyPath = getLegacyConfigPath();
+  const serverPath = getServerConfigPath();
+
+  return existsSync(legacyPath) && !existsSync(serverPath);
+}
+
+/**
+ * Migrate legacy config.json to new cli.json and server.json format
+ */
+export function migrateLegacyConfig(): MigrationResult {
+  const legacyPath = getLegacyConfigPath();
+  const warnings: string[] = [];
+
+  if (!existsSync(legacyPath)) {
+    return { migrated: false, warnings: ["No legacy config found"] };
+  }
+
+  let legacy: LegacyConfig;
+  try {
+    const content = readFileSync(legacyPath, "utf-8");
+    legacy = LegacyConfigSchema.parse(JSON.parse(content));
+  } catch (error) {
+    return {
+      migrated: false,
+      warnings: [`Failed to parse legacy config: ${error}`],
+    };
+  }
+
+  // Build server config
+  const serverConfig: ServerConfig = {
+    jellyfin: {
+      serverUrl: legacy.jellyfin?.serverUrl || DEFAULT_JELLYFIN_URL,
+    },
+    daemon: {
+      host: legacy.daemon?.host || DEFAULT_DAEMON_HOST,
+      port: legacy.daemon?.port || DEFAULT_DAEMON_PORT,
+      password: legacy.daemon?.password,
+    },
+  };
+
+  if (legacy.audio?.device) {
+    serverConfig.audio = { device: legacy.audio.device };
+  }
+
+  // Build CLI config with default profile pointing to same daemon
+  const cliConfig: CliConfig = {
+    defaultProfile: DEFAULT_PROFILE_NAME,
+    profiles: {
+      [DEFAULT_PROFILE_NAME]: {
+        host: legacy.daemon?.host || DEFAULT_DAEMON_HOST,
+        port: legacy.daemon?.port || DEFAULT_DAEMON_PORT,
+        password: legacy.daemon?.password,
+      },
+    },
+  };
+
+  // Note about auth token
+  if (legacy.jellyfin?.serverUrl) {
+    warnings.push(
+      "Auth token should already be in token storage (~/.local/share/musicd/auth.json). " +
+        "If authentication fails, re-run 'musicd setup'.",
+    );
+  }
+
+  if (
+    !legacy.jellyfin?.serverUrl ||
+    legacy.jellyfin.serverUrl === DEFAULT_JELLYFIN_URL
+  ) {
+    warnings.push(
+      "No Jellyfin server URL configured. Run 'musicd setup' to configure.",
+    );
+  }
+
+  // Save new configs
+  try {
+    saveServerConfig(serverConfig);
+    saveCliConfig(cliConfig);
+
+    // Rename legacy config to .bak
+    const backupPath = legacyPath + ".bak";
+    renameSync(legacyPath, backupPath);
+    warnings.push(`Legacy config backed up to ${backupPath}`);
+
+    return {
+      migrated: true,
+      cliConfig,
+      serverConfig,
+      warnings,
+    };
+  } catch (error) {
+    return {
+      migrated: false,
+      warnings: [`Migration failed: ${error}`],
+    };
+  }
+}
+
+// ============================================
+// Backwards Compatibility (deprecated)
+// ============================================
 
 /**
  * Information about where configuration was resolved from
+ * @deprecated Use loadServerConfig() or loadCliConfig() directly
  */
 export interface ConfigResolutionInfo {
-  /** Path to the config file that was loaded, or null if using defaults */
   configFile: string | null;
-  /** Whether using default config (no file found) */
   isDefaultConfig: boolean;
-  /** Environment variables that override config values */
   envOverrides: string[];
-  /** The XDG config path that was checked */
   xdgConfigPath: string;
 }
 
-// Zod schema for validation
-const ConfigSchema = z.object({
-  jellyfin: z.object({
-    serverUrl: z.string().url(),
-    username: z.string().optional(),
-    password: z.string().optional(),
-  }),
-  daemon: z.object({
-    port: z.number().int().min(1).max(65535),
-    host: z.string().min(1),
-    password: z.string().optional(),
-  }),
-  audio: z.object({
-    device: z.string().min(1),
-  }),
-});
-
 /**
- * Get XDG config directory path
- */
-export function getXdgConfigPath(): string {
-  const xdgConfigHome =
-    process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  return join(xdgConfigHome, XDG_CONFIG_DIR, XDG_CONFIG_FILE);
-}
-
-/**
- * Get XDG config directory (without filename)
- */
-export function getXdgConfigDir(): string {
-  const xdgConfigHome =
-    process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  return join(xdgConfigHome, XDG_CONFIG_DIR);
-}
-
-/**
- * Load configuration from file and environment variables
- * Priority: env vars > XDG config > local config file > defaults
+ * @deprecated Use loadServerConfig() for server or resolveDaemonConnection() for CLI
+ * Provided for gradual migration of existing code
  */
 export function loadConfig(): Config {
   // Load .env file
   dotenv.config();
 
-  // Load config file
+  // Try to load from new server config first
+  const serverConfigPath = getServerConfigPath();
+  const legacyConfigPath = getLegacyConfigPath();
+
   let fileConfig: Partial<Config> = {
     jellyfin: {
       serverUrl: DEFAULT_JELLYFIN_URL,
@@ -88,14 +448,39 @@ export function loadConfig(): Config {
     },
   };
 
-  // Try XDG config directory
-  const xdgConfigPath = getXdgConfigPath();
-  if (existsSync(xdgConfigPath)) {
+  // Try new server config first
+  if (existsSync(serverConfigPath)) {
     try {
-      const configData = readFileSync(xdgConfigPath, "utf-8");
+      const configData = readFileSync(serverConfigPath, "utf-8");
+      const serverConfig = JSON.parse(configData);
+      fileConfig = {
+        jellyfin: {
+          serverUrl: serverConfig.jellyfin?.serverUrl || DEFAULT_JELLYFIN_URL,
+          username: "",
+          password: "",
+        },
+        daemon: {
+          port: serverConfig.daemon?.port || DEFAULT_DAEMON_PORT,
+          host: serverConfig.daemon?.host || DEFAULT_DAEMON_HOST,
+          password: serverConfig.daemon?.password,
+        },
+        audio: {
+          device: serverConfig.audio?.device || DEFAULT_AUDIO_DEVICE,
+        },
+      };
+    } catch (error) {
+      console.warn(
+        `Could not load server config (${serverConfigPath}):`,
+        error,
+      );
+    }
+  } else if (existsSync(legacyConfigPath)) {
+    // Fall back to legacy config
+    try {
+      const configData = readFileSync(legacyConfigPath, "utf-8");
       fileConfig = JSON.parse(configData);
     } catch (error) {
-      console.warn(`Could not load config file (${xdgConfigPath}):`, error);
+      console.warn(`Could not load config file (${legacyConfigPath}):`, error);
     }
   }
 
@@ -104,19 +489,27 @@ export function loadConfig(): Config {
     jellyfin: {
       serverUrl:
         process.env.JELLYFIN_URL ||
+        process.env.JELLYFIN_SERVER_URL ||
         fileConfig.jellyfin?.serverUrl ||
         DEFAULT_JELLYFIN_URL,
       username:
-        process.env.JELLYFIN_USERNAME || fileConfig.jellyfin?.username || "",
+        process.env.JELLYFIN_USERNAME ||
+        (fileConfig.jellyfin as any)?.username ||
+        "",
       password:
-        process.env.JELLYFIN_PASSWORD || fileConfig.jellyfin?.password || "",
+        process.env.JELLYFIN_PASSWORD ||
+        (fileConfig.jellyfin as any)?.password ||
+        "",
     },
     daemon: {
       port: process.env.DAEMON_PORT
         ? parseInt(process.env.DAEMON_PORT, 10)
-        : fileConfig.daemon?.port || DEFAULT_DAEMON_PORT,
+        : process.env.DAEMON_BIND_PORT
+          ? parseInt(process.env.DAEMON_BIND_PORT, 10)
+          : fileConfig.daemon?.port || DEFAULT_DAEMON_PORT,
       host:
         process.env.DAEMON_HOST ||
+        process.env.DAEMON_BIND_HOST ||
         fileConfig.daemon?.host ||
         DEFAULT_DAEMON_HOST,
       password:
@@ -130,48 +523,42 @@ export function loadConfig(): Config {
     },
   };
 
-  // Validate configuration
-  try {
-    ConfigSchema.parse(config);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      const messages = error.errors
-        .map((e) => `${e.path.join(".")}: ${e.message}`)
-        .join(", ");
-      throw new ConfigError(`Invalid configuration: ${messages}`);
-    }
-    throw error;
-  }
-
   return config;
 }
 
 /**
  * Get information about where configuration is resolved from
- * This is useful for debugging config issues
+ * @deprecated Use loadServerConfig() or loadCliConfig() directly
  */
 export function getConfigResolutionInfo(): ConfigResolutionInfo {
-  // Load .env file (same as loadConfig)
+  // Load .env file
   dotenv.config();
 
-  const xdgConfigPath = getXdgConfigPath();
+  const serverConfigPath = getServerConfigPath();
+  const legacyConfigPath = getLegacyConfigPath();
 
   let configFile: string | null = null;
   let isDefaultConfig = true;
 
-  // Check XDG config path
-  if (existsSync(xdgConfigPath)) {
-    configFile = xdgConfigPath;
+  // Check new server config first
+  if (existsSync(serverConfigPath)) {
+    configFile = serverConfigPath;
+    isDefaultConfig = false;
+  } else if (existsSync(legacyConfigPath)) {
+    configFile = legacyConfigPath;
     isDefaultConfig = false;
   }
 
   // Check which environment variables are set
   const envOverrides: string[] = [];
   if (process.env.JELLYFIN_URL) envOverrides.push("JELLYFIN_URL");
+  if (process.env.JELLYFIN_SERVER_URL) envOverrides.push("JELLYFIN_SERVER_URL");
   if (process.env.JELLYFIN_USERNAME) envOverrides.push("JELLYFIN_USERNAME");
   if (process.env.JELLYFIN_PASSWORD) envOverrides.push("JELLYFIN_PASSWORD");
   if (process.env.DAEMON_PORT) envOverrides.push("DAEMON_PORT");
   if (process.env.DAEMON_HOST) envOverrides.push("DAEMON_HOST");
+  if (process.env.DAEMON_BIND_PORT) envOverrides.push("DAEMON_BIND_PORT");
+  if (process.env.DAEMON_BIND_HOST) envOverrides.push("DAEMON_BIND_HOST");
   if (process.env.DAEMON_PASSWORD) envOverrides.push("DAEMON_PASSWORD");
   if (process.env.AUDIO_DEVICE) envOverrides.push("AUDIO_DEVICE");
 
@@ -179,6 +566,6 @@ export function getConfigResolutionInfo(): ConfigResolutionInfo {
     configFile,
     isDefaultConfig,
     envOverrides,
-    xdgConfigPath,
+    xdgConfigPath: legacyConfigPath,
   };
 }
