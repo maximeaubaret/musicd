@@ -18,7 +18,13 @@ export type {
 } from "./types.js";
 
 // Token storage
-export { saveAuth, loadAuth, hasAuth, clearAuth } from "./token-storage.js";
+export {
+  saveAuth,
+  loadAuth,
+  hasAuth,
+  clearAuth,
+  getAuthFilePath,
+} from "./token-storage.js";
 export type { StoredAuth } from "./token-storage.js";
 
 // Constants

@@ -1,8 +1,30 @@
-import { existsSync, readFileSync, writeFileSync, chmodSync } from "fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+  mkdirSync,
+} from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import type { AuthenticationResult } from "./types.js";
+import { XDG_DATA_DIR, XDG_AUTH_FILE } from "./constants.js";
 
-const TOKEN_FILE_PATH = join(process.cwd(), ".jellyfin-auth.json");
+/**
+ * Get the XDG data directory path (~/.local/share/musicd)
+ */
+function getXdgDataDir(): string {
+  const xdgDataHome =
+    process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+  return join(xdgDataHome, XDG_DATA_DIR);
+}
+
+/**
+ * Get the auth file path (~/.local/share/musicd/auth.json)
+ */
+export function getAuthFilePath(): string {
+  return join(getXdgDataDir(), XDG_AUTH_FILE);
+}
 
 export interface StoredAuth {
   accessToken: string;
@@ -28,9 +50,16 @@ export function saveAuth(
   };
 
   try {
-    writeFileSync(TOKEN_FILE_PATH, JSON.stringify(data, null, 2), "utf-8");
+    // Ensure the data directory exists
+    const dataDir = getXdgDataDir();
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
+    }
+
+    const authPath = getAuthFilePath();
+    writeFileSync(authPath, JSON.stringify(data, null, 2), "utf-8");
     // Set file permissions to 600 (owner read/write only) for security
-    chmodSync(TOKEN_FILE_PATH, 0o600);
+    chmodSync(authPath, 0o600);
   } catch (error) {
     throw new Error(`Failed to save authentication data: ${error}`);
   }
@@ -40,12 +69,13 @@ export function saveAuth(
  * Load authentication data from disk
  */
 export function loadAuth(): StoredAuth | null {
-  if (!existsSync(TOKEN_FILE_PATH)) {
+  const authPath = getAuthFilePath();
+  if (!existsSync(authPath)) {
     return null;
   }
 
   try {
-    const data = readFileSync(TOKEN_FILE_PATH, "utf-8");
+    const data = readFileSync(authPath, "utf-8");
     return JSON.parse(data) as StoredAuth;
   } catch (error) {
     console.warn("Failed to load authentication data:", error);
@@ -57,18 +87,19 @@ export function loadAuth(): StoredAuth | null {
  * Check if authentication data exists
  */
 export function hasAuth(): boolean {
-  return existsSync(TOKEN_FILE_PATH);
+  return existsSync(getAuthFilePath());
 }
 
 /**
  * Clear stored authentication data
  */
 export function clearAuth(): void {
-  if (existsSync(TOKEN_FILE_PATH)) {
+  const authPath = getAuthFilePath();
+  if (existsSync(authPath)) {
     try {
-      writeFileSync(TOKEN_FILE_PATH, "", "utf-8");
+      writeFileSync(authPath, "", "utf-8");
       // Alternatively, you could delete the file:
-      // unlinkSync(TOKEN_FILE_PATH);
+      // unlinkSync(authPath);
     } catch (error) {
       console.warn("Failed to clear authentication data:", error);
     }
