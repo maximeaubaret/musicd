@@ -1,12 +1,7 @@
 import { createInterface } from "readline";
 import { stdin as input, stdout as output } from "process";
 import { MusicDaemonClient } from "@musicd/client";
-import {
-  loadConfig,
-  hasAuth,
-  clearAuth,
-  getXdgConfigPath,
-} from "@musicd/shared";
+import { loadConfig, clearAuth, getXdgConfigPath } from "@musicd/shared";
 
 /**
  * Prompt for user input
@@ -77,19 +72,8 @@ function promptPassword(question: string): Promise<string> {
 /**
  * Run the setup wizard
  */
-export async function runSetup(force: boolean = false): Promise<void> {
+export async function runSetup(): Promise<void> {
   console.log("🎵 Jellyfin Music Daemon Setup\n");
-
-  // Check if already configured
-  if (hasAuth() && !force) {
-    const answer = await prompt(
-      "Authentication is already configured. Do you want to reconfigure? (y/N): ",
-    );
-    if (answer.toLowerCase() !== "y") {
-      console.log("Setup cancelled.");
-      return;
-    }
-  }
 
   try {
     // Load configuration

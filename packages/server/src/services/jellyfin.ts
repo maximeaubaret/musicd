@@ -4,7 +4,13 @@ import type {
   AuthenticationResult,
   StoredAuth,
 } from "@musicd/shared";
-import { JellyfinError, loadAuth, saveAuth } from "@musicd/shared";
+import {
+  JellyfinError,
+  loadAuth,
+  saveAuth,
+  getAuthFilePath,
+} from "@musicd/shared";
+import { logger } from "../logger.js";
 
 export class JellyfinService {
   private config: JellyfinConfig;
@@ -66,7 +72,10 @@ export class JellyfinService {
       this.userId = result.User.Id;
 
       // Save to disk for future use
+      const authPath = getAuthFilePath();
+      logger.info(`Saving auth to ${authPath}`);
       saveAuth(result, username);
+      logger.info(`Auth saved successfully for user: ${username}`);
 
       return result;
     } catch (error) {

@@ -99,9 +99,8 @@ program
 program
   .command("setup")
   .description("Configure Jellyfin authentication")
-  .option("-f, --force", "Force reconfiguration even if already set up")
-  .action(async (options) => {
-    await runSetup(options.force);
+  .action(async () => {
+    await runSetup();
   });
 
 program
