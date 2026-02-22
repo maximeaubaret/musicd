@@ -4,6 +4,7 @@ import {
   writeFileSync,
   chmodSync,
   mkdirSync,
+  unlinkSync,
 } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -97,9 +98,7 @@ export function clearAuth(): void {
   const authPath = getAuthFilePath();
   if (existsSync(authPath)) {
     try {
-      writeFileSync(authPath, "", "utf-8");
-      // Alternatively, you could delete the file:
-      // unlinkSync(authPath);
+      unlinkSync(authPath);
     } catch (error) {
       console.warn("Failed to clear authentication data:", error);
     }
