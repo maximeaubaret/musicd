@@ -111,7 +111,7 @@ export async function runSetup(force: boolean = false): Promise<void> {
 
     // Create client and authenticate via daemon
     const daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
-    const client = new MusicDaemonClient(daemonUrl);
+    const client = new MusicDaemonClient(daemonUrl, config.daemon.password);
     const result = await client.authenticate(username, password);
 
     console.log(`✓ Successfully authenticated as ${result.user.name}`);
