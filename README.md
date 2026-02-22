@@ -87,7 +87,11 @@ bun install
 
 ## Configuration
 
-Create a config file at `~/.config/musicd/config.json`:
+Configuration is split into two files:
+
+### Server Config (`~/.config/musicd/server.json`)
+
+Used by the daemon:
 
 ```json
 {
@@ -96,7 +100,7 @@ Create a config file at `~/.config/musicd/config.json`:
   },
   "daemon": {
     "port": 8765,
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     "password": "optional-api-password"
   },
   "audio": {
@@ -105,11 +109,60 @@ Create a config file at `~/.config/musicd/config.json`:
 }
 ```
 
-Environment variables can override config values: `JELLYFIN_URL`, `DAEMON_PORT`, `DAEMON_HOST`, `DAEMON_PASSWORD`, `AUDIO_DEVICE`.
+### CLI Config (`~/.config/musicd/cli.json`)
+
+Connection profiles for the CLI:
+
+```json
+{
+  "defaultProfile": "local",
+  "profiles": {
+    "local": {
+      "host": "127.0.0.1",
+      "port": 8765,
+      "password": "optional-api-password"
+    },
+    "home-server": {
+      "host": "192.168.1.100",
+      "port": 8765,
+      "password": "different-password"
+    }
+  }
+}
+```
+
+### CLI Connection Options
+
+```bash
+# Uses default profile
+musicd status
+
+# Use a specific profile
+musicd --profile home-server status
+
+# Override with CLI args
+musicd --host 10.0.0.5 --port 8765 --password secret status
+```
+
+### Environment Variables
+
+| Variable              | Used By | Description               |
+| --------------------- | ------- | ------------------------- |
+| `JELLYFIN_SERVER_URL` | Server  | Jellyfin server URL       |
+| `DAEMON_BIND_HOST`    | Server  | Address to bind to        |
+| `DAEMON_BIND_PORT`    | Server  | Port to bind to           |
+| `DAEMON_PASSWORD`     | Both    | API password              |
+| `DAEMON_HOST`         | CLI     | Daemon host to connect to |
+| `DAEMON_PORT`         | CLI     | Daemon port to connect to |
+| `AUDIO_DEVICE`        | Server  | Audio output device       |
 
 ### Security
 
-Set `daemon.password` when exposing the daemon to your network. The CLI reads `DAEMON_PASSWORD` from the environment to authenticate.
+Set `daemon.password` in server config when exposing the daemon to your network. The CLI uses profiles or `DAEMON_PASSWORD` to authenticate.
+
+### Migration
+
+If you have an existing `config.json`, it will be automatically migrated to the new format on first run.
 
 ## REST API
 
