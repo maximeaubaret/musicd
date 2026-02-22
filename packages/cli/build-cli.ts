@@ -39,10 +39,6 @@ async function main() {
     console.log(`✓ Updated APP_VERSION to ${version}`);
 
     try {
-      // Rebuild shared package so changes are picked up
-      await $`cd ../shared && bun run build`;
-      console.log(`✓ Rebuilt @musicd/shared`);
-
       // Create bin directory
       await $`mkdir -p ../../bin`;
 
@@ -58,8 +54,6 @@ async function main() {
     } finally {
       // Restore original file
       writeFileSync(CONSTANTS_SRC_PATH, originalContent);
-      // Rebuild shared package to restore original version
-      await $`cd ../shared && bun run build`;
       console.log(`✓ Restored original APP_VERSION`);
     }
   } catch (error) {

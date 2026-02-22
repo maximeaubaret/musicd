@@ -9,7 +9,7 @@
     "musicd": "./src/index.ts"
   },
   "scripts": {
-    "build:exe": "bun run build-exe.ts",
+    "build:cli": "bun run build-cli.ts",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {

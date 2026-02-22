@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "bun --watch packages/server/src/index.ts",
     "cli": "bun packages/cli/src/index.ts",
-    "build:exe": "bun run --filter @musicd/cli build:exe",
+    "build:cli": "bun run --filter @musicd/cli build:cli",
     "format": "prettier --write .",
     "lint": "bun run --filter '*' lint",
     "clean": "rm -rf packages/*/dist bin/"
