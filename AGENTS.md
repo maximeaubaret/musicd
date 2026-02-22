@@ -193,19 +193,38 @@ Agent: I've added the new API endpoints. You can test them by:
    ```typescript
    export const DEFAULT_DAEMON_PORT = 8765;
    ```
-7. **No unsafe type assertions** - Avoid `as any`, `as unknown`, and similar escape hatches:
+7. **No unsafe type assertions** - The following are STRICTLY FORBIDDEN:
+   - ❌ `as any` is **NEVER** allowed
+   - ❌ TypeScript disable comments (`// @ts-ignore`, `// @ts-nocheck`, `// @ts-expect-error`)
+   - ❌ ESLint disable comments (`// eslint-disable`, `// eslint-disable-line`, `// eslint-disable-next-line`)
+   - ❌ `as unknown` (except in HTTP request handlers where JSON parsing requires it)
 
    ```typescript
-   // ✗ Wrong - unsafe type assertion
+   // ✗ FORBIDDEN - will fail CI
    const data = response as any;
    const value = something as unknown as TargetType;
+   // @ts-ignore
+   someCode();
+   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   const foo: any = bar;
 
    // ✓ Correct - use proper typing or type guards
    const data: ResponseType = await response.json();
    if (isTargetType(value)) {
      /* use value */
    }
+
+   // ✓ Only acceptable use of "as unknown" - in HTTP request handlers
+   private async request<T>(...): Promise<T> {
+     const data = (await response.json()) as unknown;
+     // ... proper type guards before using data ...
+   }
    ```
+
+   **Why this matters:**
+   - ESLint is configured with `@typescript-eslint/no-explicit-any: "error"`
+   - CI runs lint, format, and typecheck - all must pass
+   - These rules ensure type safety and code quality
 
 ### File Organization
 

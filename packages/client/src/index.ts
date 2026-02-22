@@ -5,6 +5,8 @@ import type {
   QueueResponse,
   PlayQueueResponse,
   SearchResponse,
+  SearchResult,
+  TrackInfo,
   AlbumResponse,
   ArtistResponse,
   QueueOptions,
@@ -18,6 +20,8 @@ export type {
   QueueResponse,
   PlayQueueResponse,
   SearchResponse,
+  SearchResult,
+  TrackInfo,
   AlbumResponse,
   ArtistResponse,
   QueueOptions,
@@ -67,7 +71,7 @@ export class MusicDaemonClient {
   private async request<T>(
     endpoint: string,
     method: "GET" | "POST" = "GET",
-    body?: any,
+    body?: unknown,
   ): Promise<T> {
     const url = `${this.baseUrl}/api${endpoint}`;
 
@@ -98,24 +102,31 @@ export class MusicDaemonClient {
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      const data = (await response.json()) as any;
+      const data = (await response.json()) as unknown;
       const duration = (performance.now() - startTime).toFixed(0);
 
       // Log the response
       this.logger?.debug(`  Response: ${response.status} (${duration}ms)`);
 
       if (!response.ok) {
+        // Type guard for error responses
+        const errorMessage =
+          typeof data === "object" &&
+          data !== null &&
+          "error" in data &&
+          typeof data.error === "string"
+            ? data.error
+            : `Request failed with status ${response.status}`;
+
         // Special handling for 401 errors
         if (response.status === 401) {
           throw new Error(
-            `Authentication failed: ${data.error || "Invalid or missing password"}. ` +
+            `Authentication failed: ${errorMessage === `Request failed with status ${response.status}` ? "Invalid or missing password" : errorMessage}. ` +
               `Check DAEMON_PASSWORD in your config or environment.`,
           );
         }
 
-        throw new Error(
-          data.error || `Request failed with status ${response.status}`,
-        );
+        throw new Error(errorMessage);
       }
 
       return data as T;

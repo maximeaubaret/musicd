@@ -1,18 +1,13 @@
-// @ts-nocheck
 import {
   createPrompt,
   useState,
   useKeypress,
   usePrefix,
   usePagination,
-  useRef,
   useMemo,
-  useEffect,
-  isBackspaceKey,
   isEnterKey,
   isUpKey,
   isDownKey,
-  isNumberKey,
   Separator,
   ValidationError,
   makeTheme,
@@ -251,4 +246,4 @@ export default createPrompt(
 
     return `${lines}${cursorHide}`;
   },
-) as any;
+) as <Value>(config: SelectConfig<Value>) => Promise<Value | null>;

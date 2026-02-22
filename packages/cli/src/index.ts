@@ -4,7 +4,8 @@ import chalk from "chalk";
 import select from "./select-with-quit";
 import expandableSelect from "./expandable-select";
 import { resolveDaemonConnection, APP_VERSION } from "@musicd/shared";
-import type { PlaybackStatus } from "@musicd/client";
+import type { QueueItem } from "@musicd/shared";
+import type { PlaybackStatus, SearchResult, TrackInfo } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
 import { runSetup } from "./setup";
 import { logger } from "./logger";
@@ -107,7 +108,7 @@ program
       }
 
       const addToQueue = options.queue || false;
-      let selectedItem: any;
+      let selectedItem: SearchResult | null;
 
       // If --id is provided, skip search and play directly
       if (options.id) {
@@ -153,7 +154,10 @@ program
         console.log(chalk.gray(`✓ Found 1 match`));
       } else {
         // Multiple results - show interactive expandable selection
-        const formatItem = (item: any, isChild: boolean = false) => {
+        const formatItem = (
+          item: SearchResult | TrackInfo,
+          isChild: boolean = false,
+        ) => {
           const parts = [];
 
           if (!isChild) {
@@ -190,7 +194,7 @@ program
           return parts.join(" · ");
         };
 
-        const choices = searchResult.results.map((item: any) => ({
+        const choices = searchResult.results.map((item) => ({
           name: formatItem(item),
           value: item,
           expandable: item.type === "MusicAlbum" || item.type === "MusicArtist",
@@ -200,11 +204,11 @@ program
         selectedItem = await expandableSelect({
           message: "Select a song to play (Tab to expand albums/artists):",
           choices,
-          onExpand: async (parentItem: any) => {
+          onExpand: async (parentItem: SearchResult) => {
             // Fetch tracks for this album or artist using proper API endpoints
             if (parentItem.type === "MusicAlbum") {
               const albumResult = await getClient().getAlbum(parentItem.id);
-              return albumResult.tracks.map((track: any) => ({
+              return albumResult.tracks.map((track) => ({
                 name: formatItem(track, true),
                 value: track,
                 isChild: true,
@@ -213,7 +217,7 @@ program
               }));
             } else if (parentItem.type === "MusicArtist") {
               const artistResult = await getClient().getArtist(parentItem.id);
-              return artistResult.tracks.map((track: any) => ({
+              return artistResult.tracks.map((track) => ({
                 name: formatItem(track, true),
                 value: track,
                 isChild: true,
@@ -235,7 +239,7 @@ program
       // Handle different item types
       if (selectedItem.type === "Audio") {
         // It's a track - add to queue
-        const result = await getClient().addToQueue([selectedItem.id], {
+        await getClient().addToQueue([selectedItem.id], {
           clearQueue: !addToQueue,
           playNow: !addToQueue,
         });
@@ -510,7 +514,7 @@ program
       }
 
       // Build choices for each queue item
-      const choices = result.queue.map((item: any, index: number) => {
+      const choices = result.queue.map((item: QueueItem, index: number) => {
         const isCurrent = index === result.position;
         const parts = [];
 

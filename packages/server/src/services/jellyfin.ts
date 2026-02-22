@@ -2,7 +2,6 @@ import type {
   JellyfinConfig,
   JellyfinItem,
   AuthenticationResult,
-  StoredAuth,
 } from "@musicd/shared";
 import {
   JellyfinError,
@@ -11,6 +10,26 @@ import {
   getAuthFilePath,
 } from "@musicd/shared";
 import { logger } from "../logger";
+
+// Jellyfin API response types
+interface JellyfinSearchHint {
+  Id: string;
+  Name: string;
+  Type: string;
+  Artists?: string[];
+  Album?: string;
+  AlbumArtist?: string;
+  RunTimeTicks?: number;
+  ProductionYear?: number;
+}
+
+interface JellyfinSearchResponse {
+  SearchHints?: JellyfinSearchHint[];
+}
+
+interface JellyfinItemsResponse {
+  Items?: JellyfinItem[];
+}
 
 export class JellyfinService {
   private config: JellyfinConfig;
@@ -232,11 +251,11 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as any;
+      const result = (await response.json()) as JellyfinSearchResponse;
       const searchHints = result.SearchHints || [];
 
       // Map SearchHint results to JellyfinItem format
-      let items: JellyfinItem[] = searchHints.map((hint: any) => ({
+      let items: JellyfinItem[] = searchHints.map((hint) => ({
         Id: hint.Id,
         Name: hint.Name,
         Type: hint.Type,
@@ -309,10 +328,10 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as any;
+      const result = (await response.json()) as JellyfinItemsResponse;
       const items = result.Items || [];
 
-      return items.map((item: any) => ({
+      return items.map((item) => ({
         Id: item.Id,
         Name: item.Name,
         Type: item.Type,
@@ -369,10 +388,10 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as any;
+      const result = (await response.json()) as JellyfinItemsResponse;
       const items = result.Items || [];
 
-      return items.map((item: any) => ({
+      return items.map((item) => ({
         Id: item.Id,
         Name: item.Name,
         Type: item.Type,
@@ -430,10 +449,10 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as any;
+      const result = (await response.json()) as JellyfinItemsResponse;
       const items = result.Items || [];
 
-      return items.map((item: any) => ({
+      return items.map((item) => ({
         Id: item.Id,
         Name: item.Name,
         Type: item.Type,

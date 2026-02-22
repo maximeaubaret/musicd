@@ -1,11 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
-import { unlink } from "fs/promises";
-import type {
-  PlaybackStatus,
-  PlayOptions,
-  JellyfinItem,
-  QueueItem,
-} from "@musicd/shared";
+import type { PlaybackStatus, JellyfinItem, QueueItem } from "@musicd/shared";
 import { PlayerError } from "@musicd/shared";
 
 export class PlayerService {
@@ -109,17 +103,11 @@ export class PlayerService {
   /**
    * Play a URL with ffplay
    */
-  async play(
-    url: string,
-    item: JellyfinItem,
-    options?: PlayOptions,
-  ): Promise<void> {
+  async play(url: string, item: JellyfinItem): Promise<void> {
     // Stop any existing playback (this removes all listeners)
     if (this.isPlaying()) {
       await this.stop();
     }
-
-    const device = options?.audioDevice || this.audioDevice;
 
     try {
       // Spawn ffplay process

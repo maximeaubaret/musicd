@@ -1,5 +1,11 @@
 # musicd
 
+[![CI](https://github.com/maximeaubaret/musicd/actions/workflows/ci.yml/badge.svg)](https://github.com/maximeaubaret/musicd/actions/workflows/ci.yml)
+[![Release](https://github.com/maximeaubaret/musicd/actions/workflows/release.yml/badge.svg)](https://github.com/maximeaubaret/musicd/actions/workflows/release.yml)
+[![GitHub release](https://img.shields.io/github/v/release/maximeaubaret/musicd)](https://github.com/maximeaubaret/musicd/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/platform-linux-lightgrey)](https://github.com/maximeaubaret/musicd)
+
 > This project was vibecoded. Use at your own risk.
 
 A lightweight daemon that plays music from a [Jellyfin](https://jellyfin.org) server. Control playback via CLI or REST API.

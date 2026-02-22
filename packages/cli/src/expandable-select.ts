@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {
   createPrompt,
   useState,
@@ -6,7 +5,6 @@ import {
   usePrefix,
   usePagination,
   useMemo,
-  useEffect,
   isEnterKey,
   isUpKey,
   isDownKey,
@@ -331,4 +329,4 @@ export default createPrompt(
 
     return `${lines}${cursorHide}`;
   },
-) as any;
+) as <Value>(config: ExpandableSelectConfig<Value>) => Promise<Value | null>;
