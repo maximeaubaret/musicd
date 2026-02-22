@@ -2,11 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { JellyfinService } from "../services/jellyfin.js";
 import type { PlayerService } from "../services/player.js";
-import type {
-  PlayRequest,
-  HealthResponse,
-  QueueAddRequest,
-} from "@musicd/shared";
+import type { PlayRequest, QueueAddRequest } from "@musicd/shared";
 import { JellyfinError, PlayerError, APP_VERSION } from "@musicd/shared";
 
 const PlayRequestSchema = z.object({
@@ -239,8 +235,8 @@ export function createApiRoutes(
       // Add to queue
       playerService.addToQueue(expandedItems, clearQueue);
 
-      // Play now if requested
-      if (playNow) {
+      // Play now if requested, OR if nothing is currently playing
+      if (playNow || !playerService.isPlaying()) {
         await playerService.playFromQueue(0);
       }
 
@@ -753,41 +749,6 @@ export function createApiRoutes(
         {
           success: false,
           error: "Failed to get artist tracks",
-        },
-        500,
-      );
-    }
-  });
-
-  /**
-   * GET /api/health - Check daemon health
-   */
-  app.get("/health", async (c) => {
-    try {
-      const jellyfinConnected = await jellyfinService
-        .verifyConnection()
-        .then(() => true)
-        .catch(() => false);
-
-      const health: HealthResponse = {
-        status: jellyfinConnected ? "healthy" : "unhealthy",
-        daemon: {
-          uptime: Math.floor((Date.now() - startTime) / 1000),
-          version: APP_VERSION,
-        },
-        jellyfin: {
-          connected: jellyfinConnected,
-          serverUrl: jellyfinService["config"].serverUrl,
-        },
-      };
-
-      return c.json(health);
-    } catch (error) {
-      console.error("Error checking health:", error);
-      return c.json(
-        {
-          status: "unhealthy",
-          error: "Health check failed",
         },
         500,
       );
