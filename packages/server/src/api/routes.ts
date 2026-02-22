@@ -123,21 +123,39 @@ export function createApiRoutes(
   });
 
   /**
-   * POST /api/play - Play a Jellyfin item
+   * POST /api/play - Smart play command or play specific item
+   * Without itemId: Smart play (resume if paused, play from queue if stopped)
+   * With itemId: Add item to queue and start playing
    */
   app.post("/play", async (c) => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json().catch(() => ({}));
+
+      // If no itemId provided, do smart play
+      if (!body.itemId) {
+        await playerService.play();
+        const status = await playerService.getStatus();
+
+        return c.json({
+          success: true,
+          message:
+            status.state === "playing"
+              ? "Playback started"
+              : "Playback resumed",
+          state: status.state,
+          currentItem: status.currentItem,
+        });
+      }
+
+      // Otherwise, play specific item (add to queue and play)
       const { itemId } = PlayRequestSchema.parse(body);
 
       // Get item metadata
       const item = await jellyfinService.getItem(itemId);
 
-      // Get stream URL
-      const streamUrl = await jellyfinService.getStreamUrl(itemId);
-
-      // Play the item
-      await playerService.play(streamUrl, item);
+      // Add to queue and play
+      playerService.addToQueue([item], true); // Clear queue and add this item
+      await playerService.playFromQueue(0);
 
       return c.json({
         success: true,
@@ -471,24 +489,21 @@ export function createApiRoutes(
 
   /**
    * POST /api/queue/next - Play next song in queue
+   * Now works when stopped (starts next track) and stops at end of queue
    */
   app.post("/queue/next", async (c) => {
     try {
-      if (!playerService.hasNext()) {
-        return c.json(
-          {
-            success: false,
-            error: "No next song in queue",
-          },
-          400,
-        );
-      }
-
       await playerService.playNext();
+      const status = await playerService.getStatus();
 
       return c.json({
         success: true,
-        message: "Playing next song",
+        message:
+          status.state === "stopped"
+            ? "End of queue reached"
+            : "Playing next song",
+        state: status.state,
+        currentItem: status.currentItem,
       });
     } catch (error) {
       if (error instanceof PlayerError) {
@@ -514,24 +529,21 @@ export function createApiRoutes(
 
   /**
    * POST /api/queue/previous - Play previous song in queue
+   * Now works when stopped and restarts current track at position 0
    */
   app.post("/queue/previous", async (c) => {
     try {
-      if (!playerService.hasPrevious()) {
-        return c.json(
-          {
-            success: false,
-            error: "No previous song in queue",
-          },
-          400,
-        );
-      }
-
       await playerService.playPrevious();
+      const status = await playerService.getStatus();
 
       return c.json({
         success: true,
-        message: "Playing previous song",
+        message:
+          status.state === "stopped"
+            ? "At beginning of queue"
+            : "Playing previous song",
+        state: status.state,
+        currentItem: status.currentItem,
       });
     } catch (error) {
       if (error instanceof PlayerError) {

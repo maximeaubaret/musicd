@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "lint": "bun run --filter '*' lint",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf packages/*/dist bin/"
+    "clean": "rm -rf packages/*/dist bin/",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "^1.3.9",

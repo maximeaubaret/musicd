@@ -1,0 +1,177 @@
+import { spawn, type ChildProcess } from "child_process";
+import { PlaybackBackend, PlaybackError } from "./backend";
+
+/**
+ * FFPlay backend implementation
+ * Uses ffplay (from ffmpeg) for audio playback
+ */
+export class FFPlayBackend implements PlaybackBackend {
+  private process: ChildProcess | null = null;
+  private audioDevice: string;
+  private startTime: number = 0;
+  private pausedAt: number = 0;
+  private isPaused_: boolean = false;
+  private onCompleteCallback?: () => void;
+  private onErrorCallback?: (error: Error) => void;
+
+  constructor(audioDevice: string = "default") {
+    this.audioDevice = audioDevice;
+  }
+
+  async play(url: string): Promise<void> {
+    // Stop any existing playback
+    if (this.isPlaying()) {
+      await this.stop();
+    }
+
+    try {
+      // Spawn ffplay process
+      const args = [
+        "-nodisp", // No video display
+        "-autoexit", // Exit when playback finishes
+        "-loglevel",
+        "quiet", // Suppress output
+        url,
+      ];
+
+      // Add audio device if not default
+      if (this.audioDevice !== "default") {
+        args.unshift("-audio_device", this.audioDevice);
+      }
+
+      this.process = spawn("ffplay", args);
+      this.startTime = Date.now();
+      this.pausedAt = 0;
+      this.isPaused_ = false;
+
+      // Handle process events
+      this.process.on("error", (error) => {
+        console.error("ffplay process error:", error);
+        this.cleanup();
+        if (this.onErrorCallback) {
+          this.onErrorCallback(error);
+        }
+      });
+
+      this.process.on("exit", (code) => {
+        console.log(`ffplay exited with code ${code}`);
+        const wasPlaying = this.isPlaying();
+        this.cleanup();
+
+        // Only call onComplete if process exited naturally (not stopped manually)
+        if (wasPlaying && this.onCompleteCallback) {
+          this.onCompleteCallback();
+        }
+      });
+
+      // Wait a bit to ensure ffplay has started
+      // This detects immediate startup failures (bad URL, missing codec, etc.)
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      if (!this.process || this.process.exitCode !== null) {
+        throw new PlaybackError("Failed to start ffplay process");
+      }
+    } catch (error) {
+      this.cleanup();
+      if (error instanceof PlaybackError) {
+        throw error;
+      }
+      throw new PlaybackError(`Failed to play: ${error}`);
+    }
+  }
+
+  pause(): void {
+    // No-op if already paused or not playing
+    if (!this.isPlaying() || this.isPaused_) {
+      return;
+    }
+
+    // Calculate current position
+    const elapsed = (Date.now() - this.startTime) / 1000;
+    this.pausedAt = elapsed;
+    this.isPaused_ = true;
+
+    // Send SIGSTOP to pause the process
+    this.process!.kill("SIGSTOP");
+  }
+
+  resume(): void {
+    // No-op if not paused or not playing
+    if (!this.isPlaying() || !this.isPaused_) {
+      return;
+    }
+
+    this.isPaused_ = false;
+    // Adjust start time to account for pause duration
+    this.startTime = Date.now() - this.pausedAt * 1000;
+
+    // Send SIGCONT to resume the process
+    this.process!.kill("SIGCONT");
+  }
+
+  async stop(): Promise<void> {
+    if (!this.isPlaying()) {
+      return;
+    }
+
+    const processToStop = this.process!;
+
+    try {
+      // Remove all listeners to prevent exit handler from running
+      processToStop.removeAllListeners();
+
+      // If paused, resume first so we can terminate cleanly
+      if (this.isPaused_) {
+        processToStop.kill("SIGCONT");
+      }
+
+      processToStop.kill("SIGTERM");
+
+      // Wait for process to exit
+      await new Promise((resolve) => {
+        processToStop.on("exit", resolve);
+        // Timeout after 2 seconds
+        setTimeout(() => {
+          if (processToStop && processToStop.exitCode === null) {
+            processToStop.kill("SIGKILL");
+          }
+          resolve(null);
+        }, 2000);
+      });
+    } finally {
+      this.cleanup();
+    }
+  }
+
+  isPlaying(): boolean {
+    return this.process !== null && this.process.exitCode === null;
+  }
+
+  isPaused(): boolean {
+    return this.isPaused_;
+  }
+
+  getPosition(): number {
+    if (!this.isPlaying()) {
+      return 0;
+    }
+    return this.isPaused_
+      ? this.pausedAt
+      : (Date.now() - this.startTime) / 1000;
+  }
+
+  onComplete(callback: () => void): void {
+    this.onCompleteCallback = callback;
+  }
+
+  onError(callback: (error: Error) => void): void {
+    this.onErrorCallback = callback;
+  }
+
+  private cleanup(): void {
+    this.process = null;
+    this.startTime = 0;
+    this.pausedAt = 0;
+    this.isPaused_ = false;
+  }
+}

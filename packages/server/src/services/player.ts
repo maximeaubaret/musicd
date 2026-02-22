@@ -1,14 +1,9 @@
-import { spawn, type ChildProcess } from "child_process";
 import type { PlaybackStatus, JellyfinItem, QueueItem } from "@musicd/shared";
 import { PlayerError } from "@musicd/shared";
+import type { PlaybackBackend } from "./playback/backend";
 
 export class PlayerService {
-  private process: ChildProcess | null = null;
   private currentItem: JellyfinItem | null = null;
-  private audioDevice: string;
-  private startTime: number = 0;
-  private pausedAt: number = 0; // Time when paused (in seconds)
-  private isPaused: boolean = false;
   private queue: QueueItem[] = [];
   private queuePosition: number = -1; // -1 means no queue, 0+ is current position
   private streamUrlGetter: ((itemId: string) => Promise<string>) | null = null;
@@ -31,8 +26,26 @@ export class PlayerService {
   private stateSaveEnabled: boolean = false;
   private stateSaveCallback: (() => void) | null = null;
 
-  constructor(audioDevice: string = "default") {
-    this.audioDevice = audioDevice;
+  constructor(private backend: PlaybackBackend) {
+    // Register for completion events
+    this.backend.onComplete(async () => {
+      this.cleanup();
+
+      // Auto-advance to next track if available
+      if (this.hasNext()) {
+        try {
+          await this.playNext();
+        } catch (error) {
+          console.error("Failed to auto-play next song:", error);
+        }
+      }
+    });
+
+    // Register for error events
+    this.backend.onError((error) => {
+      console.error("Playback error:", error);
+      this.cleanup();
+    });
   }
 
   /**
@@ -101,54 +114,20 @@ export class PlayerService {
   }
 
   /**
-   * Play a URL with ffplay
+   * Play a URL (internal method)
    */
-  async play(url: string, item: JellyfinItem): Promise<void> {
-    // Stop any existing playback (this removes all listeners)
-    if (this.isPlaying()) {
+  private async playInternal(url: string, item: JellyfinItem): Promise<void> {
+    // Stop any existing playback
+    if (this.backend.isPlaying()) {
       await this.stop();
     }
 
     try {
-      // Spawn ffplay process
-      const args = [
-        "-nodisp", // No video display
-        "-autoexit", // Exit when playback finishes
-        "-loglevel",
-        "quiet", // Suppress output
-        url,
-      ];
-
-      this.process = spawn("ffplay", args);
+      // Set current item BEFORE playing (for position reporting)
       this.currentItem = item;
-      this.startTime = Date.now();
 
-      // Handle process events
-      this.process.on("error", (error) => {
-        console.error("ffplay process error:", error);
-        this.cleanup();
-      });
-
-      this.process.on("exit", async (code) => {
-        console.log(`ffplay exited with code ${code}`);
-        this.cleanup();
-
-        // Auto-play next song in queue if available
-        if (this.hasNext()) {
-          try {
-            await this.playNext();
-          } catch (error) {
-            console.error("Failed to auto-play next song:", error);
-          }
-        }
-      });
-
-      // Wait a bit to ensure ffplay has started
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      if (!this.process || this.process.exitCode !== null) {
-        throw new PlayerError("Failed to start ffplay process");
-      }
+      // Play through backend (no ffplay details here!)
+      await this.backend.play(url);
 
       // Report playback start to Jellyfin
       if (this.playbackReporter) {
@@ -159,16 +138,14 @@ export class PlayerService {
           // Set up progress reporting every 10 seconds
           this.progressInterval = setInterval(async () => {
             if (this.currentItem && this.playSessionId) {
-              const elapsed = this.isPaused
-                ? this.pausedAt
-                : (Date.now() - this.startTime) / 1000;
-              const ticks = Math.floor(elapsed * 10000000);
+              const position = this.backend.getPosition();
+              const ticks = Math.floor(position * 10000000);
               try {
                 await this.playbackReporter!.reportProgress(
                   this.currentItem.Id,
                   this.playSessionId,
                   ticks,
-                  this.isPaused,
+                  this.backend.isPaused(),
                 );
               } catch (error) {
                 console.error("Failed to report playback progress:", error);
@@ -182,6 +159,43 @@ export class PlayerService {
     } catch (error) {
       this.cleanup();
       throw new PlayerError(`Failed to play: ${error}`);
+    }
+  }
+
+  /**
+   * Smart play command - context-aware play based on current state
+   * - If paused: resumes playback
+   * - If already playing: does nothing
+   * - If stopped with queue: plays from current queue position
+   * - If stopped at invalid position: plays from beginning
+   */
+  async play(): Promise<void> {
+    // If paused, resume
+    if (this.backend.isPaused() && this.backend.isPlaying()) {
+      this.resume();
+      return;
+    }
+
+    // If already playing (not paused), do nothing
+    if (this.backend.isPlaying()) {
+      return;
+    }
+
+    // If stopped, start from queue position
+    if (this.queue.length === 0) {
+      throw new PlayerError("Cannot play: queue is empty");
+    }
+
+    // Handle edge cases
+    if (this.queuePosition === -1) {
+      // No position set, start from beginning
+      await this.playFromQueue(0);
+    } else if (this.queuePosition >= this.queue.length) {
+      // Position beyond queue end, loop to start
+      await this.playFromQueue(0);
+    } else {
+      // Play from current position
+      await this.playFromQueue(this.queuePosition);
     }
   }
 
@@ -224,28 +238,46 @@ export class PlayerService {
     const item = this.queue[position];
 
     const streamUrl = await this.streamUrlGetter(item.id);
-    await this.play(streamUrl, item.jellyfinItem);
+    await this.playInternal(streamUrl, item.jellyfinItem);
   }
 
   /**
    * Play next song in queue
+   * - If at end of queue: stops playback
+   * - Otherwise: advances to next track and plays
    */
   async playNext(): Promise<void> {
-    if (!this.hasNext()) {
-      throw new PlayerError("No next song in queue");
+    // If at end of queue, stop
+    if (this.queuePosition >= this.queue.length - 1) {
+      if (this.backend.isPlaying()) {
+        await this.stop();
+      }
+      return;
     }
 
+    // Otherwise advance and play
     await this.playFromQueue(this.queuePosition + 1);
   }
 
   /**
    * Play previous song in queue
+   * - If at first track while playing: restarts current track
+   * - If at position 0 and stopped: does nothing
+   * - Otherwise: goes to previous track
    */
   async playPrevious(): Promise<void> {
-    if (!this.hasPrevious()) {
-      throw new PlayerError("No previous song in queue");
+    // If at first track and playing, restart current
+    if (this.queuePosition === 0 && this.backend.isPlaying()) {
+      await this.playFromQueue(0);
+      return;
     }
 
+    // If at position 0 and stopped, can't go back
+    if (this.queuePosition <= 0) {
+      return;
+    }
+
+    // Otherwise go to previous track
     await this.playFromQueue(this.queuePosition - 1);
   }
 
@@ -295,7 +327,7 @@ export class PlayerService {
     }
 
     // If removing the currently playing track, stop playback
-    if (index === this.queuePosition && this.isPlaying()) {
+    if (index === this.queuePosition && this.backend.isPlaying()) {
       this.stop().catch((error) => {
         console.error("Failed to stop playback:", error);
       });
@@ -319,62 +351,34 @@ export class PlayerService {
 
   /**
    * Pause playback
+   * No-op if already paused or not playing
    */
   pause(): void {
-    if (!this.process || this.process.exitCode !== null) {
-      throw new PlayerError("No playback in progress");
-    }
-
-    if (this.isPaused) {
-      throw new PlayerError("Playback is already paused");
-    }
-
-    // Calculate current position
-    const elapsed = (Date.now() - this.startTime) / 1000;
-    this.pausedAt = elapsed;
-    this.isPaused = true;
-
-    // Send SIGSTOP to pause the process
-    this.process.kill("SIGSTOP");
+    this.backend.pause();
   }
 
   /**
    * Resume playback
+   * No-op if not paused or not playing
    */
   resume(): void {
-    if (!this.process || this.process.exitCode !== null) {
-      throw new PlayerError("No playback in progress");
-    }
-
-    if (!this.isPaused) {
-      throw new PlayerError("Playback is not paused");
-    }
-
-    this.isPaused = false;
-    // Adjust start time to account for pause duration
-    this.startTime = Date.now() - this.pausedAt * 1000;
-
-    // Send SIGCONT to resume the process
-    this.process.kill("SIGCONT");
+    this.backend.resume();
   }
 
   /**
    * Stop playback
+   * Preserves queue position for potential resume
    */
   async stop(): Promise<void> {
-    if (!this.process) {
-      throw new PlayerError("No playback in progress");
+    if (!this.backend.isPlaying()) {
+      return;
     }
-
-    const processToStop = this.process;
 
     // Report playback stopped before cleanup
     if (this.playbackReporter && this.currentItem && this.playSessionId) {
       try {
-        const elapsed = this.isPaused
-          ? this.pausedAt
-          : (Date.now() - this.startTime) / 1000;
-        const ticks = Math.floor(elapsed * 10000000);
+        const position = this.backend.getPosition();
+        const ticks = Math.floor(position * 10000000);
         await this.playbackReporter.reportStop(
           this.currentItem.Id,
           this.playSessionId,
@@ -385,38 +389,15 @@ export class PlayerService {
       }
     }
 
-    try {
-      // Remove all listeners to prevent exit handler from running
-      processToStop.removeAllListeners();
-
-      // If paused, resume first so we can terminate cleanly
-      if (this.isPaused) {
-        processToStop.kill("SIGCONT");
-      }
-
-      processToStop.kill("SIGTERM");
-
-      // Wait for process to exit
-      await new Promise((resolve) => {
-        processToStop.on("exit", resolve);
-        // Timeout after 2 seconds
-        setTimeout(() => {
-          if (processToStop && processToStop.exitCode === null) {
-            processToStop.kill("SIGKILL");
-          }
-          resolve(null);
-        }, 2000);
-      });
-    } finally {
-      this.cleanup();
-    }
+    await this.backend.stop();
+    this.cleanup();
   }
 
   /**
    * Get current playback status
    */
   async getStatus(): Promise<PlaybackStatus> {
-    if (!this.isPlaying()) {
+    if (!this.backend.isPlaying()) {
       return {
         state: "stopped",
         currentItem: null,
@@ -427,16 +408,13 @@ export class PlayerService {
       };
     }
 
-    // Calculate approximate position based on elapsed time
-    const elapsed = this.isPaused
-      ? this.pausedAt
-      : (Date.now() - this.startTime) / 1000; // seconds
+    const position = this.backend.getPosition();
     const duration = this.currentItem?.RunTimeTicks
       ? this.currentItem.RunTimeTicks / 10000000 // Convert ticks to seconds
       : 0;
 
     return {
-      state: this.isPaused ? "paused" : "playing",
+      state: this.backend.isPaused() ? "paused" : "playing",
       currentItem: this.currentItem
         ? {
             id: this.currentItem.Id,
@@ -445,7 +423,7 @@ export class PlayerService {
             album: this.currentItem.Album,
           }
         : null,
-      position: Math.min(elapsed, duration),
+      position: Math.min(position, duration),
       duration,
       queue: this.queue,
       queuePosition: this.queuePosition,
@@ -456,7 +434,7 @@ export class PlayerService {
    * Check if playback is active
    */
   isPlaying(): boolean {
-    return this.process !== null && this.process.exitCode === null;
+    return this.backend.isPlaying();
   }
 
   /**
@@ -472,10 +450,8 @@ export class PlayerService {
     // Report playback stopped if we have an active session
     // This handles the case where the process exits naturally
     if (this.playbackReporter && this.currentItem && this.playSessionId) {
-      const elapsed = this.isPaused
-        ? this.pausedAt
-        : (Date.now() - this.startTime) / 1000;
-      const ticks = Math.floor(elapsed * 10000000);
+      const position = this.backend.getPosition();
+      const ticks = Math.floor(position * 10000000);
 
       // Fire and forget - don't wait for the report
       this.playbackReporter
@@ -485,11 +461,7 @@ export class PlayerService {
         });
     }
 
-    this.process = null;
     this.currentItem = null;
     this.playSessionId = null;
-    this.startTime = 0;
-    this.pausedAt = 0;
-    this.isPaused = false;
   }
 }

@@ -11,6 +11,7 @@ import {
 import type { ServerConfig } from "@musicd/shared";
 import { JellyfinService } from "./services/jellyfin";
 import { PlayerService } from "./services/player";
+import { FFPlayBackend } from "./services/playback";
 import { createApiRoutes } from "./api/routes";
 import { logger } from "./logger";
 
@@ -74,9 +75,10 @@ async function main() {
 
   // Initialize services
   const jellyfinService = new JellyfinService(config.jellyfin);
-  const playerService = new PlayerService(
+  const backend = new FFPlayBackend(
     config.audio?.device || DEFAULT_AUDIO_DEVICE,
   );
+  const playerService = new PlayerService(backend);
   const startTime = Date.now();
 
   // Configure player service with stream URL getter for queue auto-play
