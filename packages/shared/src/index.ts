@@ -4,6 +4,7 @@ export type {
   JellyfinConfig,
   AudioConfig,
   ServerBindingConfig,
+  StateConfig,
   ServerConfig,
   // CLI config types
   DaemonProfile,
@@ -36,6 +37,7 @@ export {
   JellyfinConfigSchema,
   AudioConfigSchema,
   ServerBindingConfigSchema,
+  StateConfigSchema,
   ServerConfigSchema,
 } from "./schemas";
 
@@ -66,6 +68,16 @@ export {
   getAuthFilePath,
 } from "./token-storage";
 export type { StoredAuth } from "./token-storage";
+
+// State storage
+export {
+  saveQueueState,
+  loadQueueState,
+  clearQueueState,
+  hasQueueState,
+  getQueueFilePath,
+} from "./state-storage";
+export type { QueueState } from "./state-storage";
 
 // Constants
 export * from "./constants";

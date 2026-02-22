@@ -33,8 +33,13 @@ export const ServerBindingConfigSchema = z.object({
   password: z.string().optional(),
 });
 
+export const StateConfigSchema = z.object({
+  restoreQueue: z.boolean().default(true),
+});
+
 export const ServerConfigSchema = z.object({
   jellyfin: JellyfinConfigSchema,
   daemon: ServerBindingConfigSchema,
   audio: AudioConfigSchema.optional(),
+  state: StateConfigSchema.optional(),
 });

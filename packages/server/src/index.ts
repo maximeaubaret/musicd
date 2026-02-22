@@ -5,6 +5,8 @@ import {
   hasAuth,
   getServerConfigPath,
   DEFAULT_AUDIO_DEVICE,
+  saveQueueState,
+  loadQueueState,
 } from "@musicd/shared";
 import type { ServerConfig } from "@musicd/shared";
 import { JellyfinService } from "./services/jellyfin";
@@ -92,6 +94,21 @@ async function main() {
       jellyfinService.reportPlaybackStopped(itemId, sessionId, ticks),
   });
 
+  // Configure queue state persistence
+  const shouldRestoreQueue = config.state?.restoreQueue ?? true;
+
+  if (shouldRestoreQueue) {
+    playerService.enableStatePersistence(() => {
+      const state = playerService.getQueueState();
+      try {
+        saveQueueState(state.queue, state.position);
+        logger.debug("Queue state saved");
+      } catch (error) {
+        console.error("Failed to save queue state:", error);
+      }
+    });
+  }
+
   // Verify connection to Jellyfin (only if already configured)
   if (isConfigured) {
     try {
@@ -104,6 +121,26 @@ async function main() {
       );
       console.error("  musicd setup");
       process.exit(1);
+    }
+  }
+
+  // Restore queue state if enabled
+  if (shouldRestoreQueue) {
+    try {
+      const savedState = loadQueueState();
+      if (savedState && savedState.queue.length > 0) {
+        playerService.restoreQueueState({
+          queue: savedState.queue,
+          position: savedState.queuePosition,
+        });
+        console.log(`✓ Restored queue with ${savedState.queue.length} items`);
+        if (savedState.queuePosition >= 0) {
+          console.log(`  Position: Track ${savedState.queuePosition + 1}`);
+        }
+      }
+    } catch (error) {
+      console.warn("Failed to restore queue state:", error);
+      // Non-fatal - continue startup
     }
   }
 
@@ -176,6 +213,17 @@ async function main() {
   // Graceful shutdown handler
   async function shutdown(signal: string): Promise<void> {
     console.log(`\n🛑 ${signal} received. Shutting down gracefully...`);
+
+    // Save queue state before shutdown
+    if (shouldRestoreQueue) {
+      try {
+        const state = playerService.getQueueState();
+        saveQueueState(state.queue, state.position);
+        console.log("✓ Saved queue state");
+      } catch (error) {
+        console.error("✗ Failed to save queue state:", error);
+      }
+    }
 
     // Stop playback if active (includes both playing and paused states)
     if (playerService.isPlaying()) {

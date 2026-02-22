@@ -34,6 +34,8 @@ export class PlayerService {
       ticks: number,
     ) => Promise<void>;
   } | null = null;
+  private stateSaveEnabled: boolean = false;
+  private stateSaveCallback: (() => void) | null = null;
 
   constructor(audioDevice: string = "default") {
     this.audioDevice = audioDevice;
@@ -66,6 +68,42 @@ export class PlayerService {
     ) => Promise<void>;
   }): void {
     this.playbackReporter = reporter;
+  }
+
+  /**
+   * Enable queue state persistence
+   * @param callback Function to call when state should be saved
+   */
+  enableStatePersistence(callback: () => void): void {
+    this.stateSaveEnabled = true;
+    this.stateSaveCallback = callback;
+  }
+
+  /**
+   * Get current queue state for persistence
+   */
+  getQueueState(): { queue: QueueItem[]; position: number } {
+    return {
+      queue: [...this.queue],
+      position: this.queuePosition,
+    };
+  }
+
+  /**
+   * Restore queue state (does NOT start playback)
+   */
+  restoreQueueState(state: { queue: QueueItem[]; position: number }): void {
+    this.queue = [...state.queue];
+    this.queuePosition = state.position;
+  }
+
+  /**
+   * Trigger state save if enabled
+   */
+  private triggerStateSave(): void {
+    if (this.stateSaveEnabled && this.stateSaveCallback) {
+      this.stateSaveCallback();
+    }
   }
 
   /**
@@ -178,6 +216,7 @@ export class PlayerService {
     }));
 
     this.queue.push(...queueItems);
+    this.triggerStateSave();
   }
 
   /**
@@ -193,6 +232,7 @@ export class PlayerService {
     }
 
     this.queuePosition = position;
+    this.triggerStateSave();
     const item = this.queue[position];
 
     const streamUrl = await this.streamUrlGetter(item.id);
@@ -241,6 +281,7 @@ export class PlayerService {
   clearQueue(): void {
     this.queue = [];
     this.queuePosition = -1;
+    this.triggerStateSave();
   }
 
   /**
@@ -284,6 +325,8 @@ export class PlayerService {
     if (this.queue.length === 0) {
       this.queuePosition = -1;
     }
+
+    this.triggerStateSave();
   }
 
   /**

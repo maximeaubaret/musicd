@@ -22,11 +22,18 @@ export interface ServerBindingConfig {
   password?: string;
 }
 
+/** State persistence configuration */
+export interface StateConfig {
+  /** Whether to restore queue on startup (default: true) */
+  restoreQueue: boolean;
+}
+
 /** Server configuration */
 export interface ServerConfig {
   jellyfin: JellyfinConfig;
   daemon: ServerBindingConfig;
   audio?: AudioConfig;
+  state?: StateConfig;
 }
 
 // ============================================
