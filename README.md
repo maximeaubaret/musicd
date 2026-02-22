@@ -1,6 +1,7 @@
 # musicd
 
 [![CI](https://github.com/maximeaubaret/musicd/actions/workflows/ci.yml/badge.svg)](https://github.com/maximeaubaret/musicd/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/maximeaubaret/musicd/ci.yml?label=tests)](https://github.com/maximeaubaret/musicd/actions/workflows/ci.yml)
 [![Release](https://github.com/maximeaubaret/musicd/actions/workflows/release.yml/badge.svg)](https://github.com/maximeaubaret/musicd/actions/workflows/release.yml)
 [![GitHub release](https://img.shields.io/github/v/release/maximeaubaret/musicd)](https://github.com/maximeaubaret/musicd/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
