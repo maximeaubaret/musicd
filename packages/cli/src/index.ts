@@ -90,58 +90,24 @@ program
   });
 
 program
-  .command("play")
-  .description("Search and play music from Jellyfin library")
+  .command("browse")
+  .alias("b")
+  .description("Interactive search and play music")
   .argument("[query]", "Search query (song name, artist, or album)")
-  .option("-i, --id <itemId>", "Play directly by Jellyfin item ID")
   .option("-q, --queue", "Add to queue instead of replacing it")
   .action(async (query: string | undefined, options) => {
     try {
-      // Validate that either query or --id is provided
-      if (!query && !options.id) {
-        console.error(
-          chalk.red("✗ Error: Either <query> or --id must be provided"),
-        );
-        console.log(chalk.gray("Usage: musicd play <query> [options]"));
-        console.log(chalk.gray("   or: musicd play --id <itemId> [options]"));
-        process.exit(1);
-      }
-
       const addToQueue = options.queue || false;
       let selectedItem: SearchResult | null;
 
-      // If --id is provided, skip search and play directly
-      if (options.id) {
-        // Play directly by ID - we'll queue it and let the daemon handle it
-        const result = await getClient().addToQueue([options.id], {
-          clearQueue: !addToQueue,
-          playNow: !addToQueue,
-        });
-
-        if (addToQueue) {
-          console.log(
-            chalk.green("✓ Added to queue by ID:"),
-            chalk.bold(options.id),
-          );
-          console.log(
-            chalk.gray(
-              `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
-            ),
-          );
-        } else {
-          console.log(chalk.green("▶ Playing by ID:"), chalk.bold(options.id));
-          console.log(
-            chalk.gray(
-              `  Queued ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
-            ),
-          );
-        }
-        return;
+      // Search for music
+      if (query) {
+        process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
+      } else {
+        process.stdout.write(chalk.gray(`🔍 Browsing music library...\n`));
       }
 
-      // Search for music
-      process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
-      const searchResult = await getClient().search(query!);
+      const searchResult = await getClient().search(query || "");
 
       if (searchResult.count === 0) {
         console.log(chalk.yellow("✗ No results found"));
@@ -308,6 +274,23 @@ program
       }
     } catch (error) {
       console.error(
+        chalk.red("✗ Failed to browse:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("play")
+  .alias("p")
+  .description("Play/resume current queue")
+  .action(async () => {
+    try {
+      await getClient().resume();
+      console.log(chalk.green("▶ Playback resumed"));
+    } catch (error) {
+      console.error(
         chalk.red("✗ Failed to play:"),
         error instanceof Error ? error.message : error,
       );
@@ -317,6 +300,7 @@ program
 
 program
   .command("pause")
+  .alias("pp")
   .description("Pause playback")
   .action(async () => {
     try {
@@ -325,22 +309,6 @@ program
     } catch (error) {
       console.error(
         chalk.red("✗ Failed to pause:"),
-        error instanceof Error ? error.message : error,
-      );
-      process.exit(1);
-    }
-  });
-
-program
-  .command("resume")
-  .description("Resume playback")
-  .action(async () => {
-    try {
-      await getClient().resume();
-      console.log(chalk.green("▶ Playback resumed"));
-    } catch (error) {
-      console.error(
-        chalk.red("✗ Failed to resume:"),
         error instanceof Error ? error.message : error,
       );
       process.exit(1);
@@ -442,6 +410,7 @@ program
 
 program
   .command("status")
+  .alias("s")
   .description("Show current playback status")
   .action(async () => {
     try {
@@ -501,10 +470,13 @@ program
     }
   });
 
-program
+// Queue parent command with subcommands
+const queueCmd = program
   .command("queue")
-  .description("Show queue - select a track to play it")
+  .alias("q")
+  .description("Manage playback queue")
   .action(async () => {
+    // Default action: show queue (same as 'queue show')
     try {
       const result = await getClient().getQueue();
 
@@ -590,8 +562,99 @@ program
     }
   });
 
-program
-  .command("queue-clear")
+queueCmd
+  .command("show")
+  .alias("ls")
+  .description("Show queue")
+  .action(async () => {
+    // Same implementation as default queue action
+    try {
+      const result = await getClient().getQueue();
+
+      if (result.count === 0) {
+        console.log(chalk.yellow("Queue is empty"));
+        return;
+      }
+
+      // Build choices for each queue item
+      const choices = result.queue.map((item: QueueItem, index: number) => {
+        const isCurrent = index === result.position;
+        const parts = [];
+
+        // Current track indicator
+        const prefix = isCurrent ? chalk.green("▶") : " ";
+        parts.push(prefix);
+
+        // Track number
+        parts.push(chalk.gray(`${(index + 1).toString().padStart(2, " ")}.`));
+
+        // Track name
+        parts.push(chalk.bold.white(item.name));
+
+        // Artist
+        if (item.artist) {
+          parts.push(chalk.cyan(item.artist));
+        }
+
+        // Album
+        if (item.album) {
+          parts.push(chalk.blue(item.album));
+        }
+
+        // Duration
+        if (item.duration > 0) {
+          parts.push(chalk.gray(formatDuration(item.duration)));
+        }
+
+        return {
+          name: parts.join(" · "),
+          value: index,
+        };
+      });
+
+      const selectedIndex = await select({
+        message: `Queue (${result.count} track${result.count === 1 ? "" : "s"}) - Select track to play:`,
+        choices,
+      });
+
+      // User quit with 'q'
+      if (selectedIndex === null) {
+        console.log(chalk.gray("Cancelled"));
+        return;
+      }
+
+      // Play from the selected queue position
+      try {
+        const playResult = await getClient().playFromQueue(selectedIndex);
+        if (playResult.item) {
+          console.log(
+            chalk.green("▶ Playing:"),
+            chalk.bold(playResult.item.name),
+          );
+        }
+        console.log(
+          chalk.gray(
+            `  Queue: ${playResult.position + 1}/${playResult.queueLength}`,
+          ),
+        );
+      } catch (error) {
+        console.error(
+          chalk.red("✗ Failed to play:"),
+          error instanceof Error ? error.message : error,
+        );
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(
+        chalk.red("✗ Queue error:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+queueCmd
+  .command("clear")
   .description("Clear the queue")
   .action(async () => {
     try {
@@ -606,8 +669,169 @@ program
     }
   });
 
+queueCmd
+  .command("add")
+  .description("Add to queue by search query or ID")
+  .argument("[query]", "Search query")
+  .option("-i, --id <itemId>", "Add by Jellyfin item ID")
+  .action(async (query: string | undefined, options) => {
+    try {
+      // Validate that either query or --id is provided
+      if (!query && !options.id) {
+        console.error(
+          chalk.red("✗ Error: Either <query> or --id must be provided"),
+        );
+        console.log(chalk.gray("Usage: musicd queue add <query>"));
+        console.log(chalk.gray("   or: musicd queue add --id <itemId>"));
+        process.exit(1);
+      }
+
+      // If --id is provided, add directly by ID
+      if (options.id) {
+        const result = await getClient().addToQueue([options.id], {
+          clearQueue: false,
+          playNow: false,
+        });
+
+        console.log(
+          chalk.green("✓ Added to queue by ID:"),
+          chalk.bold(options.id),
+        );
+        console.log(
+          chalk.gray(
+            `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+          ),
+        );
+        return;
+      }
+
+      // Search for music
+      process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
+      const searchResult = await getClient().search(query!);
+
+      if (searchResult.count === 0) {
+        console.log(chalk.yellow("✗ No results found"));
+        process.exit(1);
+      }
+
+      let selectedItem: SearchResult | null;
+
+      // If only one result, auto-select it
+      if (searchResult.count === 1) {
+        selectedItem = searchResult.results[0];
+        console.log(chalk.gray(`✓ Found 1 match`));
+      } else {
+        // Multiple results - show interactive expandable selection
+        const formatItem = (
+          item: SearchResult | TrackInfo,
+          isChild: boolean = false,
+        ) => {
+          const parts = [];
+
+          if (!isChild) {
+            // Add type indicator for top-level items
+            const typeIcon =
+              item.type === "Audio"
+                ? "🎵"
+                : item.type === "MusicAlbum"
+                  ? "💿"
+                  : item.type === "MusicArtist"
+                    ? "👤"
+                    : "📀";
+            parts.push(typeIcon);
+          }
+
+          parts.push(chalk.bold.white(item.name));
+
+          if (item.artist && item.type !== "MusicArtist") {
+            parts.push(chalk.cyan(item.artist));
+          }
+
+          if (item.album && item.type !== "MusicAlbum") {
+            parts.push(chalk.blue(item.album));
+          }
+
+          if (item.year) {
+            parts.push(chalk.gray(`(${item.year})`));
+          }
+
+          if (item.duration > 0) {
+            parts.push(chalk.gray(formatDuration(item.duration)));
+          }
+
+          return parts.join(" · ");
+        };
+
+        const choices = searchResult.results.map((item) => ({
+          name: formatItem(item),
+          value: item,
+          expandable: item.type === "MusicAlbum" || item.type === "MusicArtist",
+          id: item.id,
+        }));
+
+        selectedItem = await expandableSelect({
+          message:
+            "Select item to add to queue (Tab to expand albums/artists):",
+          choices,
+          onExpand: async (parentItem: SearchResult) => {
+            // Fetch tracks for this album or artist using proper API endpoints
+            if (parentItem.type === "MusicAlbum") {
+              const albumResult = await getClient().getAlbum(parentItem.id);
+              return albumResult.tracks.map((track) => ({
+                name: formatItem(track, true),
+                value: track,
+                isChild: true,
+                parentId: parentItem.id,
+                id: track.id,
+              }));
+            } else if (parentItem.type === "MusicArtist") {
+              const artistResult = await getClient().getArtist(parentItem.id);
+              return artistResult.tracks.map((track) => ({
+                name: formatItem(track, true),
+                value: track,
+                isChild: true,
+                parentId: parentItem.id,
+                id: track.id,
+              }));
+            }
+            return [];
+          },
+        });
+
+        // User quit with 'q'
+        if (selectedItem === null) {
+          console.log(chalk.gray("Cancelled"));
+          process.exit(0);
+        }
+      }
+
+      // Add to queue
+      const result = await getClient().addToQueue([selectedItem.id], {
+        clearQueue: false,
+        playNow: false,
+      });
+
+      console.log(
+        chalk.green("✓ Added to queue:"),
+        chalk.bold(selectedItem.name),
+      );
+      console.log(
+        chalk.gray(
+          `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+        ),
+      );
+    } catch (error) {
+      console.error(
+        chalk.red("✗ Failed to add to queue:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
 program
   .command("next")
+  .alias("n")
   .description("Skip to next song in queue")
   .action(async () => {
     try {
@@ -624,6 +848,7 @@ program
 
 program
   .command("previous")
+  .alias("prev")
   .description("Go to previous song in queue")
   .action(async () => {
     try {

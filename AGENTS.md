@@ -76,7 +76,7 @@ musicd --host 10.0.0.5 --port 8765 status  # Override with CLI args
 bun install              # Install dependencies and link workspace packages
 bun run dev              # Start the daemon with watch mode
 bun run cli              # Run the CLI tool
-bun run cli <command>    # Run specific CLI commands (setup, play, search, etc.)
+bun run cli <command>    # Run specific CLI commands (setup, browse, search, etc.)
 ```
 
 **Note**: No build step required! Bun runs TypeScript directly.

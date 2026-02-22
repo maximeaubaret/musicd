@@ -72,25 +72,46 @@ bun install
 3. **Play music:**
 
    ```bash
-   ./musicd play "artist or song"
-   bun run cli play "artist or song"
+   ./musicd browse "artist or song"
+   bun run cli browse "artist or song"
    ```
 
 ## CLI Commands
 
-| Command                | Description                       |
-| ---------------------- | --------------------------------- |
-| `setup`                | Authenticate with Jellyfin        |
-| `play <query>`         | Search and play interactively     |
-| `play <query> --queue` | Add to queue instead of replacing |
-| `search <query>`       | Search without playing            |
-| `stop`                 | Stop playback                     |
-| `status`               | Show current track                |
-| `queue`                | View and select from queue        |
-| `queue-clear`          | Clear the queue                   |
-| `next`                 | Skip to next track                |
-| `previous`             | Previous track                    |
-| `health`               | Check daemon status               |
+### Discovery & Playback
+
+| Command             | Alias | Description                         |
+| ------------------- | ----- | ----------------------------------- |
+| `browse [query]`    | `b`   | Interactive search and play music   |
+| `browse -q [query]` | -     | Interactive search and add to queue |
+| `search <query>`    | -     | Search library (non-interactive)    |
+
+### Queue Management
+
+| Command             | Alias | Description              |
+| ------------------- | ----- | ------------------------ |
+| `queue`             | `q`   | Show queue (interactive) |
+| `queue show`        | -     | Show queue (explicit)    |
+| `queue clear`       | -     | Clear the queue          |
+| `queue add <query>` | -     | Search and add to queue  |
+| `queue add -i <id>` | -     | Add by item ID to queue  |
+
+### Playback Control
+
+| Command    | Alias  | Description               |
+| ---------- | ------ | ------------------------- |
+| `play`     | `p`    | Play/resume current queue |
+| `pause`    | `pp`   | Pause playback            |
+| `stop`     | -      | Stop playback             |
+| `next`     | `n`    | Skip to next track        |
+| `previous` | `prev` | Previous track            |
+| `status`   | `s`    | Show current playback     |
+
+### Setup
+
+| Command | Alias | Description                |
+| ------- | ----- | -------------------------- |
+| `setup` | -     | Authenticate with Jellyfin |
 
 ## Configuration
 
