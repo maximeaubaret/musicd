@@ -8,15 +8,9 @@ import type {
   ServerConfig,
   DaemonProfile,
   ResolvedDaemonConnection,
-  LegacyConfig,
-  Config,
-} from "./types.js";
-import { ConfigError } from "./types.js";
-import {
-  CliConfigSchema,
-  ServerConfigSchema,
-  LegacyConfigSchema,
-} from "./schemas.js";
+} from "./types";
+import { ConfigError } from "./types";
+import { CliConfigSchema, ServerConfigSchema } from "./schemas";
 import {
   DEFAULT_DAEMON_PORT,
   DEFAULT_DAEMON_HOST,
@@ -24,10 +18,9 @@ import {
   DEFAULT_JELLYFIN_URL,
   DEFAULT_PROFILE_NAME,
   XDG_CONFIG_DIR,
-  XDG_CONFIG_FILE,
   CLI_CONFIG_FILE,
   SERVER_CONFIG_FILE,
-} from "./constants.js";
+} from "./constants";
 
 // ============================================
 // Path Utilities
@@ -59,27 +52,6 @@ export function getCliConfigPath(): string {
  */
 export function getServerConfigPath(): string {
   return join(getMusicdConfigDir(), SERVER_CONFIG_FILE);
-}
-
-/**
- * Get legacy config file path (for migration)
- */
-export function getLegacyConfigPath(): string {
-  return join(getMusicdConfigDir(), XDG_CONFIG_FILE);
-}
-
-/**
- * @deprecated Use getCliConfigPath() or getServerConfigPath() instead
- */
-export function getXdgConfigPath(): string {
-  return getLegacyConfigPath();
-}
-
-/**
- * @deprecated Use getMusicdConfigDir() instead
- */
-export function getXdgConfigDir(): string {
-  return getMusicdConfigDir();
 }
 
 // ============================================
@@ -284,169 +256,4 @@ export function saveServerConfig(config: ServerConfig): void {
   // Validate before saving
   ServerConfigSchema.parse(config);
   writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-}
-
-// ============================================
-// Backwards Compatibility (deprecated)
-// ============================================
-
-/**
- * Information about where configuration was resolved from
- * @deprecated Use loadServerConfig() or loadCliConfig() directly
- */
-export interface ConfigResolutionInfo {
-  configFile: string | null;
-  isDefaultConfig: boolean;
-  envOverrides: string[];
-  xdgConfigPath: string;
-}
-
-/**
- * @deprecated Use loadServerConfig() for server or resolveDaemonConnection() for CLI
- * Provided for gradual migration of existing code
- */
-export function loadConfig(): Config {
-  // Load .env file
-  dotenv.config();
-
-  // Try to load from new server config first
-  const serverConfigPath = getServerConfigPath();
-  const legacyConfigPath = getLegacyConfigPath();
-
-  let fileConfig: Partial<Config> = {
-    jellyfin: {
-      serverUrl: DEFAULT_JELLYFIN_URL,
-      username: "",
-      password: "",
-    },
-    daemon: {
-      port: DEFAULT_DAEMON_PORT,
-      host: DEFAULT_DAEMON_HOST,
-      password: undefined,
-    },
-    audio: {
-      device: DEFAULT_AUDIO_DEVICE,
-    },
-  };
-
-  // Try new server config first
-  if (existsSync(serverConfigPath)) {
-    try {
-      const configData = readFileSync(serverConfigPath, "utf-8");
-      const serverConfig = JSON.parse(configData);
-      fileConfig = {
-        jellyfin: {
-          serverUrl: serverConfig.jellyfin?.serverUrl || DEFAULT_JELLYFIN_URL,
-          username: "",
-          password: "",
-        },
-        daemon: {
-          port: serverConfig.daemon?.port || DEFAULT_DAEMON_PORT,
-          host: serverConfig.daemon?.host || DEFAULT_DAEMON_HOST,
-          password: serverConfig.daemon?.password,
-        },
-        audio: {
-          device: serverConfig.audio?.device || DEFAULT_AUDIO_DEVICE,
-        },
-      };
-    } catch (error) {
-      console.warn(
-        `Could not load server config (${serverConfigPath}):`,
-        error,
-      );
-    }
-  } else if (existsSync(legacyConfigPath)) {
-    // Fall back to legacy config
-    try {
-      const configData = readFileSync(legacyConfigPath, "utf-8");
-      fileConfig = JSON.parse(configData);
-    } catch (error) {
-      console.warn(`Could not load config file (${legacyConfigPath}):`, error);
-    }
-  }
-
-  // Merge with environment variables (env vars take precedence)
-  const config: Config = {
-    jellyfin: {
-      serverUrl:
-        process.env.JELLYFIN_URL ||
-        process.env.JELLYFIN_SERVER_URL ||
-        fileConfig.jellyfin?.serverUrl ||
-        DEFAULT_JELLYFIN_URL,
-      username:
-        process.env.JELLYFIN_USERNAME ||
-        (fileConfig.jellyfin as any)?.username ||
-        "",
-      password:
-        process.env.JELLYFIN_PASSWORD ||
-        (fileConfig.jellyfin as any)?.password ||
-        "",
-    },
-    daemon: {
-      port: process.env.DAEMON_PORT
-        ? parseInt(process.env.DAEMON_PORT, 10)
-        : process.env.DAEMON_BIND_PORT
-          ? parseInt(process.env.DAEMON_BIND_PORT, 10)
-          : fileConfig.daemon?.port || DEFAULT_DAEMON_PORT,
-      host:
-        process.env.DAEMON_HOST ||
-        process.env.DAEMON_BIND_HOST ||
-        fileConfig.daemon?.host ||
-        DEFAULT_DAEMON_HOST,
-      password:
-        process.env.DAEMON_PASSWORD || fileConfig.daemon?.password || undefined,
-    },
-    audio: {
-      device:
-        process.env.AUDIO_DEVICE ||
-        fileConfig.audio?.device ||
-        DEFAULT_AUDIO_DEVICE,
-    },
-  };
-
-  return config;
-}
-
-/**
- * Get information about where configuration is resolved from
- * @deprecated Use loadServerConfig() or loadCliConfig() directly
- */
-export function getConfigResolutionInfo(): ConfigResolutionInfo {
-  // Load .env file
-  dotenv.config();
-
-  const serverConfigPath = getServerConfigPath();
-  const legacyConfigPath = getLegacyConfigPath();
-
-  let configFile: string | null = null;
-  let isDefaultConfig = true;
-
-  // Check new server config first
-  if (existsSync(serverConfigPath)) {
-    configFile = serverConfigPath;
-    isDefaultConfig = false;
-  } else if (existsSync(legacyConfigPath)) {
-    configFile = legacyConfigPath;
-    isDefaultConfig = false;
-  }
-
-  // Check which environment variables are set
-  const envOverrides: string[] = [];
-  if (process.env.JELLYFIN_URL) envOverrides.push("JELLYFIN_URL");
-  if (process.env.JELLYFIN_SERVER_URL) envOverrides.push("JELLYFIN_SERVER_URL");
-  if (process.env.JELLYFIN_USERNAME) envOverrides.push("JELLYFIN_USERNAME");
-  if (process.env.JELLYFIN_PASSWORD) envOverrides.push("JELLYFIN_PASSWORD");
-  if (process.env.DAEMON_PORT) envOverrides.push("DAEMON_PORT");
-  if (process.env.DAEMON_HOST) envOverrides.push("DAEMON_HOST");
-  if (process.env.DAEMON_BIND_PORT) envOverrides.push("DAEMON_BIND_PORT");
-  if (process.env.DAEMON_BIND_HOST) envOverrides.push("DAEMON_BIND_HOST");
-  if (process.env.DAEMON_PASSWORD) envOverrides.push("DAEMON_PASSWORD");
-  if (process.env.AUDIO_DEVICE) envOverrides.push("AUDIO_DEVICE");
-
-  return {
-    configFile,
-    isDefaultConfig,
-    envOverrides,
-    xdgConfigPath: legacyConfigPath,
-  };
 }

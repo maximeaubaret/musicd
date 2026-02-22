@@ -7,10 +7,10 @@ import {
   DEFAULT_AUDIO_DEVICE,
 } from "@musicd/shared";
 import type { ServerConfig } from "@musicd/shared";
-import { JellyfinService } from "./services/jellyfin.js";
-import { PlayerService } from "./services/player.js";
-import { createApiRoutes } from "./api/routes.js";
-import { logger } from "./logger.js";
+import { JellyfinService } from "./services/jellyfin";
+import { PlayerService } from "./services/player";
+import { createApiRoutes } from "./api/routes";
+import { logger } from "./logger";
 
 // Parse command line arguments
 const args = process.argv.slice(2);

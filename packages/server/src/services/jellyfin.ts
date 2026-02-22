@@ -10,7 +10,7 @@ import {
   saveAuth,
   getAuthFilePath,
 } from "@musicd/shared";
-import { logger } from "../logger.js";
+import { logger } from "../logger";
 
 export class JellyfinService {
   private config: JellyfinConfig;

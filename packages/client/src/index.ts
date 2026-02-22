@@ -9,7 +9,7 @@ import type {
   ArtistResponse,
   QueueOptions,
   PlaybackStatus,
-} from "./types.js";
+} from "./types";
 
 export type {
   AuthResponse,

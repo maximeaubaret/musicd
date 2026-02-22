@@ -8,8 +8,8 @@ import {
 } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import type { AuthenticationResult } from "./types.js";
-import { XDG_DATA_DIR, XDG_AUTH_FILE } from "./constants.js";
+import type { AuthenticationResult } from "./types";
+import { XDG_DATA_DIR, XDG_AUTH_FILE } from "./constants";
 
 /**
  * Get the XDG data directory path (~/.local/share/musicd)

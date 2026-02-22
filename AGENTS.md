@@ -133,22 +133,15 @@ Agent: I've added the new API endpoints. You can test them by:
 
 ### Import Conventions
 
-1. **Always use `.js` extensions** for local imports (TypeScript requirement for ES modules):
-
-   ```typescript
-   import { loadServerConfig } from "../shared/config.js"; // ✓ Correct
-   import { loadServerConfig } from "../shared/config"; // ✗ Wrong
-   ```
-
-2. **Use package names for cross-package imports**:
+1. **Use package names for cross-package imports**:
 
    ```typescript
    import { loadServerConfig } from "@musicd/shared"; // ✓ Correct for imports from other packages
    import { MusicDaemonClient } from "@musicd/client"; // ✓ Correct
-   import { JellyfinService } from "../services/jellyfin.js"; // ✓ Correct for same-package imports
+   import { JellyfinService } from "./services/jellyfin"; // ✓ Correct for same-package imports
    ```
 
-3. **Import order** (separated by blank lines):
+2. **Import order** (separated by blank lines):
 
    ```typescript
    // 1. External dependencies
@@ -167,16 +160,16 @@ Agent: I've added the new API endpoints. You can test them by:
    import { MusicDaemonClient } from "@musicd/client";
 
    // 4. Same-package imports
-   import { JellyfinService } from "./services/jellyfin.js";
+   import { JellyfinService } from "./services/jellyfin";
 
    // 5. Type-only imports from internal modules
    import type { PlayRequest, ServerConfig } from "@musicd/shared";
    ```
 
-4. **Use `type` imports** for type-only imports:
+3. **Use `type` imports** for type-only imports:
    ```typescript
-   import type { JellyfinConfig } from "./types.js"; // ✓ Correct for types
-   import { JellyfinError } from "./types.js"; // ✓ Correct for runtime values
+   import type { JellyfinConfig } from "./types"; // ✓ Correct for types
+   import { JellyfinError } from "./types"; // ✓ Correct for runtime values
    ```
 
 ### TypeScript Conventions
@@ -199,6 +192,19 @@ Agent: I've added the new API endpoints. You can test them by:
 6. **UPPER_SNAKE_CASE** for constants:
    ```typescript
    export const DEFAULT_DAEMON_PORT = 8765;
+   ```
+7. **No unsafe type assertions** - Avoid `as any`, `as unknown`, and similar escape hatches:
+
+   ```typescript
+   // ✗ Wrong - unsafe type assertion
+   const data = response as any;
+   const value = something as unknown as TargetType;
+
+   // ✓ Correct - use proper typing or type guards
+   const data: ResponseType = await response.json();
+   if (isTargetType(value)) {
+     /* use value */
+   }
    ```
 
 ### File Organization

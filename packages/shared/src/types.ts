@@ -60,47 +60,6 @@ export interface ResolvedDaemonConnection {
   profileName?: string;
 }
 
-// ============================================
-// Legacy Configuration Types (for migration)
-// ============================================
-
-/** @deprecated Old unified config format - for migration only */
-export interface LegacyConfig {
-  jellyfin?: {
-    serverUrl?: string;
-    username?: string;
-    password?: string;
-  };
-  daemon?: {
-    port?: number;
-    host?: string;
-    password?: string;
-  };
-  audio?: {
-    device?: string;
-  };
-}
-
-/**
- * @deprecated Use ServerConfig instead
- * Old DaemonConfig interface kept for backwards compatibility
- */
-export interface DaemonConfig {
-  port: number;
-  host: string;
-  password?: string;
-}
-
-/**
- * @deprecated Use ServerConfig instead
- * Old unified Config interface kept for backwards compatibility
- */
-export interface Config {
-  jellyfin: JellyfinConfig & { username?: string; password?: string };
-  daemon: DaemonConfig;
-  audio: AudioConfig & { device: string };
-}
-
 // Jellyfin API types
 export interface AuthenticationResult {
   User: {

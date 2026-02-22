@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import chalk from "chalk";
-import select from "./select-with-quit.js";
-import expandableSelect from "./expandable-select.js";
+import select from "./select-with-quit";
+import expandableSelect from "./expandable-select";
 import { resolveDaemonConnection, APP_VERSION } from "@musicd/shared";
 import type { PlaybackStatus } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
-import { runSetup } from "./setup.js";
-import { logger } from "./logger.js";
+import { runSetup } from "./setup";
+import { logger } from "./logger";
 
 const program = new Command();
 

@@ -9,10 +9,6 @@ export type {
   DaemonProfile,
   CliConfig,
   ResolvedDaemonConnection,
-  // Legacy types (deprecated)
-  LegacyConfig,
-  DaemonConfig,
-  Config,
   // API types
   AuthenticationResult,
   JellyfinItem,
@@ -23,13 +19,13 @@ export type {
   PlayOptions,
   PlayRequest,
   QueueAddRequest,
-} from "./types.js";
+} from "./types";
 export {
   JellyfinError,
   PlayerError,
   ConfigError,
   AuthenticationError,
-} from "./types.js";
+} from "./types";
 
 // Schemas
 export {
@@ -41,9 +37,7 @@ export {
   AudioConfigSchema,
   ServerBindingConfigSchema,
   ServerConfigSchema,
-  // Legacy schemas
-  LegacyConfigSchema,
-} from "./schemas.js";
+} from "./schemas";
 
 // Configuration
 export {
@@ -52,7 +46,6 @@ export {
   getMusicdConfigDir,
   getCliConfigPath,
   getServerConfigPath,
-  getLegacyConfigPath,
   // CLI config functions
   loadCliConfig,
   saveCliConfig,
@@ -61,13 +54,8 @@ export {
   // Server config functions
   loadServerConfig,
   saveServerConfig,
-  // Deprecated (for backwards compatibility)
-  loadConfig,
-  getXdgConfigPath,
-  getXdgConfigDir,
-  getConfigResolutionInfo,
-} from "./config.js";
-export type { CliConnectionArgs, ConfigResolutionInfo } from "./config.js";
+} from "./config";
+export type { CliConnectionArgs } from "./config";
 
 // Token storage
 export {
@@ -76,8 +64,8 @@ export {
   hasAuth,
   clearAuth,
   getAuthFilePath,
-} from "./token-storage.js";
-export type { StoredAuth } from "./token-storage.js";
+} from "./token-storage";
+export type { StoredAuth } from "./token-storage";
 
 // Constants
-export * from "./constants.js";
+export * from "./constants";

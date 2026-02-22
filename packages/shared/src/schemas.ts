@@ -38,29 +38,3 @@ export const ServerConfigSchema = z.object({
   daemon: ServerBindingConfigSchema,
   audio: AudioConfigSchema.optional(),
 });
-
-// ============================================
-// Legacy Config Schema (for migration detection)
-// ============================================
-
-export const LegacyConfigSchema = z.object({
-  jellyfin: z
-    .object({
-      serverUrl: z.string().optional(),
-      username: z.string().optional(),
-      password: z.string().optional(),
-    })
-    .optional(),
-  daemon: z
-    .object({
-      port: z.number().optional(),
-      host: z.string().optional(),
-      password: z.string().optional(),
-    })
-    .optional(),
-  audio: z
-    .object({
-      device: z.string().optional(),
-    })
-    .optional(),
-});

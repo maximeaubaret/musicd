@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { z } from "zod";
-import type { JellyfinService } from "../services/jellyfin.js";
-import type { PlayerService } from "../services/player.js";
+import type { JellyfinService } from "../services/jellyfin";
+import type { PlayerService } from "../services/player";
 import type { PlayRequest, QueueAddRequest } from "@musicd/shared";
 import { JellyfinError, PlayerError, APP_VERSION } from "@musicd/shared";
 

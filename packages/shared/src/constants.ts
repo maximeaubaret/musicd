@@ -5,7 +5,6 @@ export const DEFAULT_JELLYFIN_URL = "http://localhost:8096";
 export const DEFAULT_PROFILE_NAME = "default";
 
 export const XDG_CONFIG_DIR = "musicd";
-export const XDG_CONFIG_FILE = "config.json"; // Legacy - kept for migration
 export const CLI_CONFIG_FILE = "cli.json";
 export const SERVER_CONFIG_FILE = "server.json";
 
