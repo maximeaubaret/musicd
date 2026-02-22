@@ -100,7 +100,7 @@ Used by the daemon:
   },
   "daemon": {
     "port": 8765,
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "password": "optional-api-password"
   },
   "audio": {
@@ -146,15 +146,23 @@ musicd --host 10.0.0.5 --port 8765 --password secret status
 
 ### Environment Variables
 
-| Variable              | Used By | Description               |
-| --------------------- | ------- | ------------------------- |
-| `JELLYFIN_SERVER_URL` | Server  | Jellyfin server URL       |
-| `DAEMON_BIND_HOST`    | Server  | Address to bind to        |
-| `DAEMON_BIND_PORT`    | Server  | Port to bind to           |
-| `DAEMON_PASSWORD`     | Both    | API password              |
-| `DAEMON_HOST`         | CLI     | Daemon host to connect to |
-| `DAEMON_PORT`         | CLI     | Daemon port to connect to |
-| `AUDIO_DEVICE`        | Server  | Audio output device       |
+**Server:**
+
+| Variable              | Description         |
+| --------------------- | ------------------- |
+| `JELLYFIN_SERVER_URL` | Jellyfin server URL |
+| `DAEMON_BIND_HOST`    | Address to bind to  |
+| `DAEMON_BIND_PORT`    | Port to bind to     |
+| `DAEMON_PASSWORD`     | API password        |
+| `AUDIO_DEVICE`        | Audio output device |
+
+**CLI:**
+
+| Variable          | Description               |
+| ----------------- | ------------------------- |
+| `DAEMON_HOST`     | Daemon host to connect to |
+| `DAEMON_PORT`     | Daemon port to connect to |
+| `DAEMON_PASSWORD` | API password              |
 
 ### Security
 
