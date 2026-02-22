@@ -9,4 +9,4 @@ export const XDG_CONFIG_FILE = "config.json";
 export const XDG_DATA_DIR = "musicd";
 export const XDG_AUTH_FILE = "auth.json";
 
-export const APP_VERSION = "0.2.2";
+export const APP_VERSION = "0.2.3";
