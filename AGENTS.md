@@ -6,11 +6,19 @@ This document contains instructions for AI agents working on this project.
 
 A TypeScript/Bun daemon that plays music from a Jellyfin server. Uses Hono for HTTP API, Commander for CLI, and Zod for validation.
 
+**Monorepo Structure**: This project uses Bun workspaces with 4 packages:
+- `@musicd/shared` - Shared types, configuration, utilities
+- `@musicd/client` - HTTP client for daemon API
+- `@musicd/server` - HTTP daemon server
+- `@musicd/cli` - CLI tool
+
 ## Build, Lint, and Test Commands
 
 ### Development
 
 ```bash
+bun install              # Install dependencies and link workspace packages
+bun run build            # Build all packages (required before first run)
 bun run dev              # Start the daemon with watch mode
 bun run cli              # Run the CLI tool
 bun run cli <command>    # Run specific CLI commands (setup, play, search, etc.)
@@ -20,7 +28,8 @@ bun run cli <command>    # Run specific CLI commands (setup, play, search, etc.)
 
 ```bash
 bun run format           # Format all files with Prettier
-bun run lint             # Lint TypeScript files with ESLint
+bun run lint             # Lint all packages with ESLint
+bun run clean            # Clean build artifacts from all packages
 ```
 
 ### Testing
@@ -68,7 +77,15 @@ Agent: I've added the new API endpoints. You can test them by:
    import { loadConfig } from "../shared/config"; // ✗ Wrong
    ```
 
-2. **Import order** (separated by blank lines):
+2. **Use package names for cross-package imports**:
+
+   ```typescript
+   import { loadConfig } from "@musicd/shared"; // ✓ Correct for imports from other packages
+   import { MusicDaemonClient } from "@musicd/client"; // ✓ Correct
+   import { JellyfinService } from "../services/jellyfin.js"; // ✓ Correct for same-package imports
+   ```
+
+3. **Import order** (separated by blank lines):
 
    ```typescript
    // 1. External dependencies
@@ -78,15 +95,15 @@ Agent: I've added the new API endpoints. You can test them by:
    // 2. Type-only imports from external deps
    import type { Context } from "hono";
 
-   // 3. Internal imports
-   import { JellyfinService } from "../services/jellyfin.js";
+   // 3. Internal imports from workspace packages
+   import { loadConfig, JellyfinError, APP_VERSION } from "@musicd/shared";
+   import { MusicDaemonClient } from "@musicd/client";
 
-   // 4. Type-only imports from internal modules
-   import type { PlayRequest, HealthResponse } from "../../shared/types.js";
+   // 4. Same-package imports
+   import { JellyfinService } from "./services/jellyfin.js";
 
-   // 5. Error classes and constants
-   import { JellyfinError } from "../../shared/types.js";
-   import { APP_VERSION } from "../../shared/constants.js";
+   // 5. Type-only imports from internal modules
+   import type { PlayRequest, HealthResponse } from "@musicd/shared";
    ```
 
 3. **Use `type` imports** for type-only imports:
@@ -120,15 +137,32 @@ Agent: I've added the new API endpoints. You can test them by:
 ### File Organization
 
 ```
-src/
-├── cli/          # CLI commands and interactions
-├── server/       # HTTP server and API routes
-│   ├── api/      # API route handlers
-│   └── services/ # Business logic services
-└── shared/       # Shared types, utilities, and configuration
-    ├── types.ts      # Type definitions
-    ├── constants.ts  # Application constants
-    └── config.ts     # Configuration loading
+packages/
+├── shared/       # Shared types, config, utilities
+│   └── src/
+│       ├── types.ts      # Type definitions
+│       ├── constants.ts  # Application constants
+│       ├── config.ts     # Configuration loading
+│       ├── token-storage.ts  # Auth token management
+│       └── index.ts      # Public API exports
+├── client/       # HTTP client for daemon API
+│   └── src/
+│       ├── index.ts      # MusicDaemonClient class
+│       └── types.ts      # Client-specific response types
+├── server/       # HTTP daemon server
+│   └── src/
+│       ├── index.ts      # Server entry point
+│       ├── api/
+│       │   └── routes.ts # API route handlers
+│       └── services/
+│           ├── jellyfin.ts   # Jellyfin API service
+│           └── player.ts     # Player service
+└── cli/          # CLI tool
+    └── src/
+        ├── index.ts      # CLI entry point
+        ├── setup.ts      # Setup wizard
+        ├── select-with-quit.ts    # Interactive UI
+        └── expandable-select.ts   # Interactive UI
 ```
 
 ### Error Handling

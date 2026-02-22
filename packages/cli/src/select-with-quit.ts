@@ -1,14 +1,18 @@
+// @ts-nocheck
 import {
   createPrompt,
   useState,
   useKeypress,
   usePrefix,
   usePagination,
+  useRef,
   useMemo,
   useEffect,
+  isBackspaceKey,
   isEnterKey,
   isUpKey,
   isDownKey,
+  isNumberKey,
   Separator,
   ValidationError,
   makeTheme,
@@ -55,10 +59,6 @@ type Choice<Value> = {
   short?: string;
   disabled?: boolean | string;
   type?: never;
-  expandable?: boolean; // New: indicates this item can be expanded
-  parentId?: string; // New: if this is a child item, references parent
-  isChild?: boolean; // New: indicates this is a child item
-  id?: string; // New: unique identifier for tracking expanded state
 };
 
 type NormalizedChoice<Value> = {
@@ -67,20 +67,15 @@ type NormalizedChoice<Value> = {
   description?: string;
   short: string;
   disabled: boolean | string;
-  expandable?: boolean;
-  parentId?: string;
-  isChild?: boolean;
-  id?: string;
 };
 
-type ExpandableSelectConfig<Value> = {
+type SelectConfig<Value> = {
   message: string;
   choices: ReadonlyArray<Choice<Value>>;
   pageSize?: number;
   loop?: boolean;
   default?: NoInfer<Value>;
   theme?: PartialDeep<Theme<SelectTheme>>;
-  onExpand?: (value: Value) => Promise<ReadonlyArray<Choice<Value>>>;
 };
 
 function isSelectable<Value>(
@@ -105,10 +100,6 @@ function normalizeChoices<Value>(
       name,
       short: choice.short ?? name,
       disabled: choice.disabled ?? false,
-      expandable: choice.expandable,
-      parentId: choice.parentId,
-      isChild: choice.isChild,
-      id: choice.id,
     };
 
     if (choice.description) {
@@ -119,21 +110,17 @@ function normalizeChoices<Value>(
   });
 }
 
-export default createPrompt(
-  <Value>(
-    config: ExpandableSelectConfig<Value>,
-    done: (value: Value | null) => void,
-  ) => {
-    const { loop = true, pageSize = 15, onExpand } = config;
+export default (createPrompt(
+  <Value>(config: SelectConfig<Value>, done: (value: Value | null) => void) => {
+    const { loop = true, pageSize = 7 } = config;
     const theme = makeTheme<SelectTheme>(selectTheme, config.theme);
     const [status, setStatus] = useState<Status>("idle");
     const prefix = usePrefix({ status, theme });
 
-    const [items, setItems] = useState<Array<NormalizedChoice<Value>>>(() =>
-      normalizeChoices(config.choices),
+    const items = useMemo(
+      () => normalizeChoices(config.choices),
+      [config.choices],
     );
-    const [expanded, setExpanded] = useState<Set<string>>(new Set());
-    const [loading, setLoading] = useState(false);
 
     const bounds = useMemo(() => {
       const first = items.findIndex(isNavigable);
@@ -162,70 +149,15 @@ export default createPrompt(
     const selectedChoice = items[active] as NormalizedChoice<Value>;
     const [errorMsg, setError] = useState<string>();
 
-    useKeypress(async (key, rl) => {
+    useKeypress((key, rl) => {
       if (errorMsg) {
         setError(undefined);
-      }
-
-      if (loading) {
-        return; // Ignore keys while loading
       }
 
       // Handle 'q' to quit
       if (key.name === "q") {
         setStatus("done");
         done(null);
-        return;
-      }
-
-      // Handle Tab to expand/collapse
-      if (key.name === "tab" && selectedChoice.expandable && onExpand) {
-        const itemValue = selectedChoice.value;
-        const itemId = selectedChoice.id;
-
-        if (!itemId) {
-          setError("Cannot expand item without ID");
-          return;
-        }
-
-        if (expanded.has(itemId)) {
-          // Collapse: remove child items
-          const newExpanded = new Set(expanded);
-          newExpanded.delete(itemId);
-          setExpanded(newExpanded);
-
-          const newItems = items.filter((item) => item.parentId !== itemId);
-          setItems(newItems);
-
-          // Adjust active if needed
-          if (active >= newItems.length) {
-            setActive(newItems.length - 1);
-          }
-        } else {
-          // Expand: fetch and add child items
-          setLoading(true);
-          try {
-            const childChoices = await onExpand(itemValue);
-            const normalizedChildren = normalizeChoices(childChoices);
-
-            // Insert children right after the parent
-            const parentIndex = items.findIndex((item) => item.id === itemId);
-            const newItems = [
-              ...items.slice(0, parentIndex + 1),
-              ...normalizedChildren,
-              ...items.slice(parentIndex + 1),
-            ];
-            setItems(newItems);
-
-            const newExpanded = new Set(expanded);
-            newExpanded.add(itemId);
-            setExpanded(newExpanded);
-          } catch (error) {
-            setError(`Failed to expand: ${error}`);
-          } finally {
-            setLoading(false);
-          }
-        }
         return;
       }
 
@@ -266,9 +198,6 @@ export default createPrompt(
     const helpLine = theme.style.keysHelpTip([
       ["↑↓/jk", "navigate"],
       ["⏎", "select"],
-      ...(selectedChoice.expandable
-        ? [["tab", "expand"] as [string, string]]
-        : []),
       ["q", "quit"],
     ]);
 
@@ -281,25 +210,18 @@ export default createPrompt(
         }
 
         const cursor = isActive ? theme.icon.cursor : " ";
-        const indent = item.isChild ? "  " : "";
-        const expandIndicator =
-          item.expandable && !item.isChild
-            ? expanded.has(item.id || "")
-              ? "▼ "
-              : "▶ "
-            : "";
 
         if (item.disabled) {
           const disabledLabel =
             typeof item.disabled === "string" ? item.disabled : "(disabled)";
           const disabledCursor = isActive ? theme.icon.cursor : "-";
           return theme.style.disabled(
-            `${indent}${disabledCursor} ${expandIndicator}${item.name} ${disabledLabel}`,
+            `${disabledCursor} ${item.name} ${disabledLabel}`,
           );
         }
 
         const color = isActive ? theme.style.highlight : (x: string) => x;
-        return color(`${indent}${cursor} ${expandIndicator}${item.name}`);
+        return color(`${cursor} ${item.name}`);
       },
       pageSize,
       loop,
@@ -314,10 +236,9 @@ export default createPrompt(
         .join(" ");
     }
 
-    const loadingIndicator = loading ? styleText("dim", " (loading...)") : "";
     const { description } = selectedChoice;
     const lines = [
-      [prefix, message, loadingIndicator].filter(Boolean).join(" "),
+      [prefix, message].filter(Boolean).join(" "),
       page,
       " ",
       description ? theme.style.description(description) : "",
@@ -330,4 +251,4 @@ export default createPrompt(
 
     return `${lines}${cursorHide}`;
   },
-);
+)) as any;

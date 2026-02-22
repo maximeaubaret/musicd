@@ -1,8 +1,7 @@
 import { createInterface } from "readline";
 import { stdin as input, stdout as output } from "process";
-import { JellyfinService } from "../server/services/jellyfin.js";
-import { loadConfig } from "../shared/config.js";
-import { hasAuth, clearAuth } from "../shared/token-storage.js";
+import { MusicDaemonClient } from "@musicd/client";
+import { loadConfig, hasAuth, clearAuth } from "@musicd/shared";
 
 /**
  * Prompt for user input
@@ -105,11 +104,12 @@ export async function runSetup(force: boolean = false): Promise<void> {
 
     console.log("\nAuthenticating...");
 
-    // Create service and authenticate
-    const jellyfinService = new JellyfinService(config.jellyfin);
-    const result = await jellyfinService.authenticate(username, password);
+    // Create client and authenticate via daemon
+    const daemonUrl = `http://${config.daemon.host}:${config.daemon.port}`;
+    const client = new MusicDaemonClient(daemonUrl);
+    const result = await client.authenticate(username, password);
 
-    console.log(`✓ Successfully authenticated as ${result.User.Name}`);
+    console.log(`✓ Successfully authenticated as ${result.user.name}`);
     console.log("✓ Authentication token saved\n");
     console.log(
       "Setup complete! You can now start the daemon with: bun run dev",

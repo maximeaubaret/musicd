@@ -5,8 +5,8 @@ import type {
   PlayOptions,
   JellyfinItem,
   QueueItem,
-} from "../../shared/types.js";
-import { PlayerError } from "../../shared/types.js";
+} from "@musicd/shared";
+import { PlayerError } from "@musicd/shared";
 
 export class PlayerService {
   private process: ChildProcess | null = null;

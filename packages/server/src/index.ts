@@ -1,20 +1,18 @@
 #!/usr/bin/env bun
 import { Hono } from "hono";
 import { logger } from "hono/logger";
-import { loadConfig } from "../shared/config.js";
+import { loadConfig, hasAuth } from "@musicd/shared";
 import { JellyfinService } from "./services/jellyfin.js";
 import { PlayerService } from "./services/player.js";
 import { createApiRoutes } from "./api/routes.js";
-import { hasAuth } from "../shared/token-storage.js";
 
 async function main() {
   console.log("🎵 Starting Jellyfin Music Daemon...");
 
-  // Check if setup has been completed
-  if (!hasAuth()) {
-    console.error("✗ Not configured. Please run setup first:");
-    console.error("  bun run cli setup");
-    process.exit(1);
+  const isConfigured = hasAuth();
+  if (!isConfigured) {
+    console.warn("⚠ Not configured. Run 'bun run cli setup' to authenticate.");
+    console.warn("  Starting in setup mode - only /api/auth endpoint available.");
   }
 
   // Load configuration
@@ -40,17 +38,19 @@ async function main() {
     jellyfinService.getStreamUrl(itemId),
   );
 
-  // Verify connection to Jellyfin
-  try {
-    await jellyfinService.verifyConnection();
-    console.log("✓ Connected to Jellyfin server");
-  } catch (error) {
-    console.error("✗ Failed to connect to Jellyfin:", error);
-    console.error(
-      "  Your authentication may have expired. Try running setup again:",
-    );
-    console.error("  bun run cli setup --force");
-    process.exit(1);
+  // Verify connection to Jellyfin (only if already configured)
+  if (isConfigured) {
+    try {
+      await jellyfinService.verifyConnection();
+      console.log("✓ Connected to Jellyfin server");
+    } catch (error) {
+      console.error("✗ Failed to connect to Jellyfin:", error);
+      console.error(
+        "  Your authentication may have expired. Try running setup again:",
+      );
+      console.error("  bun run cli setup --force");
+      process.exit(1);
+    }
   }
 
   // Create Hono app
@@ -82,6 +82,7 @@ async function main() {
     `✓ Server started at http://${config.daemon.host}:${config.daemon.port}`,
   );
   console.log("\nAPI Endpoints:");
+  console.log(`  POST /api/auth                - Authenticate with Jellyfin`);
   console.log(`  POST /api/play                - Play a Jellyfin item`);
   console.log(`  POST /api/stop                - Stop playback`);
   console.log(`  GET  /api/status              - Get playback status`);

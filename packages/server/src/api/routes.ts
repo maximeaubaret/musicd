@@ -6,9 +6,8 @@ import type {
   PlayRequest,
   HealthResponse,
   QueueAddRequest,
-} from "../../shared/types.js";
-import { JellyfinError, PlayerError } from "../../shared/types.js";
-import { APP_VERSION } from "../../shared/constants.js";
+} from "@musicd/shared";
+import { JellyfinError, PlayerError, APP_VERSION } from "@musicd/shared";
 
 const PlayRequestSchema = z.object({
   itemId: z.string().min(1, "Item ID is required"),
@@ -28,6 +27,40 @@ export function createApiRoutes(
   startTime: number,
 ) {
   const app = new Hono();
+
+  /**
+   * POST /api/auth - Authenticate with Jellyfin
+   * Used by CLI setup command instead of direct JellyfinService import
+   */
+  app.post("/auth", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { username, password } = z
+        .object({
+          username: z.string().min(1),
+          password: z.string().min(1),
+        })
+        .parse(body);
+
+      const result = await jellyfinService.authenticate(username, password);
+
+      return c.json({
+        success: true,
+        user: {
+          id: result.User.Id,
+          name: result.User.Name,
+        },
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        return c.json(
+          { success: false, error: error.message },
+          (error.statusCode || 500) as 401 | 500,
+        );
+      }
+      return c.json({ success: false, error: "Authentication failed" }, 500);
+    }
+  });
 
   /**
    * POST /api/play - Play a Jellyfin item

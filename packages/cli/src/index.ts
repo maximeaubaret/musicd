@@ -3,8 +3,9 @@ import { Command } from "commander";
 import chalk from "chalk";
 import select from "./select-with-quit.js";
 import expandableSelect from "./expandable-select.js";
-import { loadConfig } from "../shared/config.js";
-import type { PlaybackStatus, HealthResponse } from "../shared/types.js";
+import { loadConfig } from "@musicd/shared";
+import type { PlaybackStatus, HealthResponse } from "@musicd/client";
+import { MusicDaemonClient } from "@musicd/client";
 import { runSetup } from "./setup.js";
 
 const program = new Command();
@@ -18,39 +19,8 @@ try {
   daemonUrl = "http://127.0.0.1:8765";
 }
 
-/**
- * Make API request to daemon
- */
-async function apiRequest(
-  endpoint: string,
-  method: "GET" | "POST" = "GET",
-  body?: any,
-): Promise<any> {
-  try {
-    const response = await fetch(`${daemonUrl}/api${endpoint}`, {
-      method,
-      headers: body ? { "Content-Type": "application/json" } : {},
-      body: body ? JSON.stringify(body) : undefined,
-    });
-
-    const data = (await response.json()) as any;
-
-    if (!response.ok) {
-      throw new Error(
-        data.error || `Request failed with status ${response.status}`,
-      );
-    }
-
-    return data;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("fetch failed")) {
-      throw new Error(
-        `Cannot connect to daemon at ${daemonUrl}. Is it running? Start it with: bun run dev`,
-      );
-    }
-    throw error;
-  }
-}
+// Create client instance
+const client = new MusicDaemonClient(daemonUrl);
 
 /**
  * Format duration in seconds to MM:SS
@@ -86,9 +56,7 @@ program
 
       // Search for music
       process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
-      const searchResult = await apiRequest(
-        `/search?q=${encodeURIComponent(query)}`,
-      );
+      const searchResult = await client.search(query);
 
       if (searchResult.count === 0) {
         console.log(chalk.yellow("✗ No results found"));
@@ -153,9 +121,7 @@ program
           onExpand: async (parentItem: any) => {
             // Fetch tracks for this album or artist using proper API endpoints
             if (parentItem.type === "MusicAlbum") {
-              const albumResult = await apiRequest(
-                `/album/${parentItem.id}`,
-              );
+              const albumResult = await client.getAlbum(parentItem.id);
               return albumResult.tracks.map((track: any) => ({
                 name: formatItem(track, true),
                 value: track,
@@ -164,9 +130,7 @@ program
                 id: track.id,
               }));
             } else if (parentItem.type === "MusicArtist") {
-              const artistResult = await apiRequest(
-                `/artist/${parentItem.id}`,
-              );
+              const artistResult = await client.getArtist(parentItem.id);
               return artistResult.tracks.map((track: any) => ({
                 name: formatItem(track, true),
                 value: track,
@@ -189,10 +153,9 @@ program
       // Handle different item types
       if (selectedItem.type === "Audio") {
         // It's a track - add to queue
-        const result = await apiRequest("/queue/add", "POST", {
-          itemIds: [selectedItem.id],
+        const result = await client.addToQueue([selectedItem.id], {
           clearQueue: !addToQueue,
-          playNow: true,
+          playNow: !addToQueue,
         });
 
         if (addToQueue) {
@@ -223,8 +186,7 @@ program
           chalk.gray(`🎵 ${addToQueue ? "Adding" : "Queueing"} ${itemType} "${selectedItem.name}"...\n`),
         );
 
-        const result = await apiRequest("/queue/add", "POST", {
-          itemIds: [selectedItem.id],
+        const result = await client.addToQueue([selectedItem.id], {
           clearQueue: !addToQueue,
           playNow: !addToQueue,
         });
@@ -264,7 +226,7 @@ program
   .description("Stop playback")
   .action(async () => {
     try {
-      await apiRequest("/stop", "POST");
+      await client.stop();
       console.log("✓ Playback stopped");
     } catch (error) {
       console.error(
@@ -289,9 +251,7 @@ program
         process.exit(1);
       }
 
-      const result = await apiRequest(
-        `/search?q=${encodeURIComponent(query)}&limit=${limit}`,
-      );
+      const result = await client.search(query, limit);
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -359,7 +319,7 @@ program
   .description("Show current playback status")
   .action(async () => {
     try {
-      const status: PlaybackStatus = await apiRequest("/status");
+      const status: PlaybackStatus = await client.status();
 
       if (status.state === "stopped") {
         console.log(chalk.gray("⏸  No playback in progress"));
@@ -416,7 +376,7 @@ program
   .description("Check daemon health")
   .action(async () => {
     try {
-      const health: HealthResponse = await apiRequest("/health");
+      const health: HealthResponse = await client.health();
 
       console.log(
         `Status: ${health.status === "healthy" ? "✓ Healthy" : "✗ Unhealthy"}`,
@@ -444,7 +404,7 @@ program
   .description("Show queue - select a track to play it")
   .action(async () => {
     try {
-      const result = await apiRequest("/queue");
+      const result = await client.getQueue();
 
       if (result.count === 0) {
         console.log(chalk.yellow("Queue is empty"));
@@ -500,14 +460,13 @@ program
 
       // Play from the selected queue position
       try {
-        const playResult = await apiRequest(
-          `/queue/play/${selectedIndex}`,
-          "POST",
-        );
-        console.log(
-          chalk.green("▶ Playing:"),
-          chalk.bold(playResult.item.name),
-        );
+        const playResult = await client.playFromQueue(selectedIndex);
+        if (playResult.item) {
+          console.log(
+            chalk.green("▶ Playing:"),
+            chalk.bold(playResult.item.name),
+          );
+        }
         console.log(
           chalk.gray(
             `  Queue: ${playResult.position + 1}/${playResult.queueLength}`,
@@ -534,7 +493,7 @@ program
   .description("Clear the queue")
   .action(async () => {
     try {
-      await apiRequest("/queue/clear", "POST");
+      await client.clearQueue();
       console.log(chalk.green("✓ Queue cleared"));
     } catch (error) {
       console.error(
@@ -550,7 +509,7 @@ program
   .description("Skip to next song in queue")
   .action(async () => {
     try {
-      await apiRequest("/queue/next", "POST");
+      await client.playNext();
       console.log(chalk.green("⏭  Skipped to next song"));
     } catch (error) {
       console.error(
@@ -566,7 +525,7 @@ program
   .description("Go to previous song in queue")
   .action(async () => {
     try {
-      await apiRequest("/queue/previous", "POST");
+      await client.playPrevious();
       console.log(chalk.green("⏮  Went to previous song"));
     } catch (error) {
       console.error(

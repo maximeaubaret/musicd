@@ -1,0 +1,31 @@
+{
+  "name": "@musicd/cli",
+  "version": "0.1.0",
+  "description": "CLI for Jellyfin Music Daemon",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "bin": {
+    "musicd": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@inquirer/ansi": "^2.0.3",
+    "@inquirer/core": "^11.1.4",
+    "@inquirer/figures": "^2.0.3",
+    "@inquirer/select": "^5.0.7",
+    "@inquirer/type": "^4.0.3",
+    "@musicd/client": "workspace:*",
+    "@musicd/shared": "workspace:*",
+    "chalk": "^5.6.2",
+    "commander": "^12.0.0",
+    "wrap-ansi": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}

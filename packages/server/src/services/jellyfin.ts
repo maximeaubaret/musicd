@@ -2,13 +2,9 @@ import type {
   JellyfinConfig,
   JellyfinItem,
   AuthenticationResult,
-} from "../../shared/types.js";
-import { JellyfinError } from "../../shared/types.js";
-import {
-  loadAuth,
-  saveAuth,
-  type StoredAuth,
-} from "../../shared/token-storage.js";
+  StoredAuth,
+} from "@musicd/shared";
+import { JellyfinError, loadAuth, saveAuth } from "@musicd/shared";
 
 export class JellyfinService {
   private config: JellyfinConfig;
@@ -167,8 +163,8 @@ export class JellyfinService {
         );
       }
 
-      const item = await response.json();
-      return item as JellyfinItem;
+      const item = (await response.json()) as JellyfinItem;
+      return item;
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
@@ -224,7 +220,7 @@ export class JellyfinService {
         );
       }
 
-      const result = await response.json();
+      const result = (await response.json()) as any;
       const searchHints = result.SearchHints || [];
 
       // Map SearchHint results to JellyfinItem format
@@ -301,7 +297,7 @@ export class JellyfinService {
         );
       }
 
-      const result = await response.json();
+      const result = (await response.json()) as any;
       const items = result.Items || [];
 
       return items.map((item: any) => ({
@@ -361,7 +357,7 @@ export class JellyfinService {
         );
       }
 
-      const result = await response.json();
+      const result = (await response.json()) as any;
       const items = result.Items || [];
 
       return items.map((item: any) => ({
@@ -422,7 +418,7 @@ export class JellyfinService {
         );
       }
 
-      const result = await response.json();
+      const result = (await response.json()) as any;
       const items = result.Items || [];
 
       return items.map((item: any) => ({

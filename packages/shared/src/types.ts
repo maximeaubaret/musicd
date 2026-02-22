@@ -39,6 +39,7 @@ export interface JellyfinItem {
   AlbumArtist?: string;
   RunTimeTicks?: number;
   ProductionYear?: number;
+  IndexNumber?: number;
   MediaSources?: MediaSource[];
 }
 
