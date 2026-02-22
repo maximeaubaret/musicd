@@ -11,4 +11,4 @@ export const SERVER_CONFIG_FILE = "server.json";
 export const XDG_DATA_DIR = "musicd";
 export const XDG_AUTH_FILE = "auth.json";
 
-export const APP_VERSION = "1.0.0";
+export const APP_VERSION = "1.1.0";
