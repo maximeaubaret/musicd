@@ -173,13 +173,14 @@ async function main() {
   console.log(`  GET  /api/health              - Check daemon health`);
   console.log("\nPress Ctrl+C to stop");
 
-  // Graceful shutdown
-  process.on("SIGINT", async () => {
-    console.log("\n🛑 Shutting down...");
+  // Graceful shutdown handler
+  async function shutdown(signal: string): Promise<void> {
+    console.log(`\n🛑 ${signal} received. Shutting down gracefully...`);
 
-    // Stop playback if active
+    // Stop playback if active (includes both playing and paused states)
     if (playerService.isPlaying()) {
       try {
+        console.log("Stopping playback...");
         await playerService.stop();
         console.log("✓ Stopped playback");
       } catch (error) {
@@ -190,7 +191,15 @@ async function main() {
     server.stop();
     console.log("✓ Server stopped");
     process.exit(0);
-  });
+  }
+
+  // Register signal handlers for graceful shutdown
+  const signals = ["SIGINT", "SIGTERM"] as const;
+  for (const signal of signals) {
+    process.on(signal, () => {
+      void shutdown(signal);
+    });
+  }
 }
 
 main().catch((error) => {
