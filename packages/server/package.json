@@ -1,6 +1,6 @@
 {
   "name": "@musicd/server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "HTTP daemon server for Jellyfin music playback",
   "type": "module",
   "private": true,
