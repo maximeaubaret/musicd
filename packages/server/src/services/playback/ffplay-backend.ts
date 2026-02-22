@@ -14,6 +14,7 @@ export class FFPlayBackend implements PlaybackBackend {
   private startTime: number = 0;
   private pausedAt: number = 0;
   private isPaused_: boolean = false;
+  private manuallyStopped: boolean = false;
   private onCompleteCallback?: () => void;
   private onErrorCallback?: (error: Error) => void;
 
@@ -65,6 +66,7 @@ export class FFPlayBackend implements PlaybackBackend {
       this.startTime = Date.now();
       this.pausedAt = 0;
       this.isPaused_ = false;
+      this.manuallyStopped = false;
 
       // Capture stdout/stderr when in debug mode
       if (this.debug) {
@@ -102,13 +104,13 @@ export class FFPlayBackend implements PlaybackBackend {
 
       childProcess.on("exit", (code) => {
         logger.debug(`[ffplay] exited with code ${code}`);
-        const wasPlaying = this.isPlaying();
-        this.cleanup();
 
         // Only call onComplete if process exited naturally (not stopped manually)
-        if (wasPlaying && this.onCompleteCallback) {
+        if (!this.manuallyStopped && this.onCompleteCallback) {
           this.onCompleteCallback();
         }
+
+        this.cleanup();
       });
 
       // Wait a bit to ensure ffplay has started
@@ -162,6 +164,7 @@ export class FFPlayBackend implements PlaybackBackend {
     }
 
     const processToStop = this.process!;
+    this.manuallyStopped = true;
 
     try {
       // Remove all listeners to prevent exit handler from running
@@ -220,5 +223,6 @@ export class FFPlayBackend implements PlaybackBackend {
     this.startTime = 0;
     this.pausedAt = 0;
     this.isPaused_ = false;
+    this.manuallyStopped = false;
   }
 }

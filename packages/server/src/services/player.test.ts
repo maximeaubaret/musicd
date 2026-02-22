@@ -434,6 +434,8 @@ describe("PlayerService", () => {
   });
 
   describe("Auto-advance", () => {
+    // NOTE: These tests use MockBackend to simulate track completion.
+    // The real FFPlayBackend detects completion via process exit events.
     test("stops when last track finishes naturally", async () => {
       const items = createMockQueue(2);
       player.addToQueue(items);
