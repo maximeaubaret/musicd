@@ -12,7 +12,9 @@ async function main() {
   const isConfigured = hasAuth();
   if (!isConfigured) {
     console.warn("⚠ Not configured. Run 'bun run cli setup' to authenticate.");
-    console.warn("  Starting in setup mode - only /api/auth endpoint available.");
+    console.warn(
+      "  Starting in setup mode - only /api/auth endpoint available.",
+    );
   }
 
   // Load configuration
@@ -37,6 +39,16 @@ async function main() {
   playerService.setStreamUrlGetter((itemId) =>
     jellyfinService.getStreamUrl(itemId),
   );
+
+  // Configure player service with playback reporter for Jellyfin play tracking
+  playerService.setPlaybackReporter({
+    reportStart: (itemId, sessionId) =>
+      jellyfinService.reportPlaybackStart(itemId, sessionId),
+    reportProgress: (itemId, sessionId, ticks, paused) =>
+      jellyfinService.reportPlaybackProgress(itemId, sessionId, ticks, paused),
+    reportStop: (itemId, sessionId, ticks) =>
+      jellyfinService.reportPlaybackStopped(itemId, sessionId, ticks),
+  });
 
   // Verify connection to Jellyfin (only if already configured)
   if (isConfigured) {
