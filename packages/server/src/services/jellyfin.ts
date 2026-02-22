@@ -39,7 +39,7 @@ export class JellyfinService {
     password: string,
   ): Promise<AuthenticationResult> {
     try {
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Users/AuthenticateByName`,
         {
           method: "POST",
@@ -106,9 +106,12 @@ export class JellyfinService {
         );
       }
 
-      const response = await fetch(`${this.config.serverUrl}/System/Info`, {
-        headers: this.getHeaders(),
-      });
+      const response = await this.loggedFetch(
+        `${this.config.serverUrl}/System/Info`,
+        {
+          headers: this.getHeaders(),
+        },
+      );
 
       if (response.status === 401) {
         // Token is invalid/expired
@@ -147,7 +150,7 @@ export class JellyfinService {
     }
 
     try {
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Users/${this.userId}/Items/${itemId}`,
         {
           headers: this.getHeaders(),
@@ -208,7 +211,7 @@ export class JellyfinService {
 
       params.append("includeItemTypes", "Audio,MusicAlbum,MusicArtist");
 
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Search/Hints?${params}`,
         {
           headers: this.getHeaders(),
@@ -292,7 +295,7 @@ export class JellyfinService {
         userId: this.userId!,
       });
 
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
         {
           headers: this.getHeaders(),
@@ -320,7 +323,7 @@ export class JellyfinService {
       }));
     } catch (error) {
       // Don't fail the whole search if artist items fetch fails
-      console.error("Error fetching items by artist:", error);
+      logger.error("Error fetching items by artist:", error);
       return [];
     }
   }
@@ -345,7 +348,7 @@ export class JellyfinService {
         userId: this.userId!,
       });
 
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
         {
           headers: this.getHeaders(),
@@ -406,7 +409,7 @@ export class JellyfinService {
         userId: this.userId!,
       });
 
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
         {
           headers: this.getHeaders(),
@@ -484,7 +487,7 @@ export class JellyfinService {
     }
 
     try {
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Sessions/Playing`,
         {
           method: "POST",
@@ -539,7 +542,7 @@ export class JellyfinService {
     }
 
     try {
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Sessions/Playing/Progress`,
         {
           method: "POST",
@@ -593,7 +596,7 @@ export class JellyfinService {
     }
 
     try {
-      const response = await fetch(
+      const response = await this.loggedFetch(
         `${this.config.serverUrl}/Sessions/Playing/Stopped`,
         {
           method: "POST",
@@ -649,5 +652,51 @@ export class JellyfinService {
     }
 
     return headers;
+  }
+
+  /**
+   * Wrapper around fetch that logs HTTP requests/responses when logging is enabled
+   */
+  private async loggedFetch(
+    url: string,
+    init?: RequestInit,
+  ): Promise<Response> {
+    const method = init?.method || "GET";
+    const startTime = performance.now();
+
+    // Sanitize URL for logging (mask token if present)
+    const logUrl = url.replace(/api_key=[^&]+/, "api_key=***");
+
+    // Log request
+    logger.http("request", { method, url: logUrl });
+
+    try {
+      const response = await fetch(url, init);
+      const duration = Math.round(performance.now() - startTime);
+
+      // Log response
+      logger.http("response", {
+        method,
+        url: logUrl,
+        status: response.status,
+        duration,
+      });
+
+      return response;
+    } catch (error) {
+      const duration = Math.round(performance.now() - startTime);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Log error
+      logger.http("response", {
+        method,
+        url: logUrl,
+        duration,
+        error: errorMsg,
+      });
+
+      // Re-throw the error
+      throw error;
+    }
   }
 }

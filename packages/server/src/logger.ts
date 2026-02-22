@@ -52,6 +52,44 @@ class Logger {
       console.log("[warn]", ...args);
     }
   }
+
+  /**
+   * Log an error message (only prints when enabled)
+   */
+  error(...args: unknown[]): void {
+    if (this.enabled) {
+      console.error("[error]", ...args);
+    }
+  }
+
+  /**
+   * Log HTTP request/response details (only prints when enabled)
+   * Provides structured logging for API calls
+   */
+  http(
+    type: "request" | "response",
+    details: {
+      method: string;
+      url: string;
+      status?: number;
+      duration?: number;
+      error?: string;
+    },
+  ): void {
+    if (this.enabled) {
+      if (type === "request") {
+        console.log(`[http] --> ${details.method} ${details.url}`);
+      } else {
+        const statusEmoji =
+          details.status && details.status >= 400 ? "❌" : "✓";
+        const duration = details.duration ? ` (${details.duration}ms)` : "";
+        const errorMsg = details.error ? ` - ${details.error}` : "";
+        console.log(
+          `[http] <-- ${details.method} ${details.url} ${details.status}${duration}${statusEmoji}${errorMsg}`,
+        );
+      }
+    }
+  }
 }
 
 // Singleton instance
