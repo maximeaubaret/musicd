@@ -362,17 +362,17 @@ describe("PlayerService", () => {
     test("stops playback when queue cleared while playing", async () => {
       const items = createMockQueue(3);
       player.addToQueue(items);
-
       await player.playFromQueue(0);
 
       expect(player.isPlaying()).toBe(true);
 
       player.clearQueue();
 
-      // Give clearQueue time to trigger stop
-
+      // Allow fire-and-forget stop() promise to resolve
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(player.getQueue().length).toBe(0);
       expect(player.getQueuePosition()).toBe(-1);
+      expect(player.isPlaying()).toBe(false);
     });
 
     test("continues playback when items added to queue", async () => {

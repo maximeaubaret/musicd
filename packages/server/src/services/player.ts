@@ -299,6 +299,11 @@ export class PlayerService {
    * Clear the queue
    */
   clearQueue(): void {
+    if (this.backend.isPlaying() || this.backend.isPaused()) {
+      this.stop().catch((error) => {
+        console.error("Failed to stop playback:", error);
+      });
+    }
     this.queue = [];
     this.queuePosition = -1;
     this.triggerStateSave();
