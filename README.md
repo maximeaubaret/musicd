@@ -113,6 +113,29 @@ bun install
 | ------- | ----- | -------------------------- |
 | `setup` | -     | Authenticate with Jellyfin |
 
+### Global Options
+
+| Option                  | Description                  |
+| ----------------------- | ---------------------------- |
+| `--json`                | Output results as JSON       |
+| `--profile <name>`      | Use named connection profile |
+| `--host <host>`         | Daemon host address          |
+| `--port <port>`         | Daemon port                  |
+| `--password <password>` | Daemon password              |
+| `--print-logs`          | Enable debug logging         |
+
+The `--json` flag makes all commands output structured JSON to stdout, suitable for
+scripting and piping. Interactive commands (browse, queue) output data instead of
+launching prompts. Errors are output as `{ "error": "..." }` to stderr.
+
+```bash
+musicd status --json                    # JSON playback status
+musicd search "query" --json             # JSON search results
+musicd next --json                       # JSON with new track info
+musicd queue --json                      # JSON queue dump (no prompt)
+musicd status --json | jq .state         # Pipe to jq
+```
+
 ## Configuration
 
 Configuration is split into two files:
@@ -161,16 +184,17 @@ Connection profiles for the CLI:
 
 ### CLI Connection Options
 
-```bash
 # Uses default profile
+
 musicd status
-
-# Use a specific profile
 musicd --profile home-server status
-
-# Override with CLI args
 musicd --host 10.0.0.5 --port 8765 --password secret status
-```
+
+# JSON output for scripting
+
+musicd --json status
+
+````
 
 ### Environment Variables
 
@@ -222,7 +246,7 @@ bun run dev          # Start daemon with watch mode
 bun run cli <cmd>    # Run CLI commands
 bun run format       # Format code
 bun run lint         # Lint code
-```
+````
 
 ### Project Structure
 

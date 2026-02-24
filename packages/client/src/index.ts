@@ -1,6 +1,8 @@
 import type {
+  ActionResponse,
   AuthResponse,
   PlayResponse,
+  PlaybackActionResponse,
   QueueAddResponse,
   QueueResponse,
   PlayQueueResponse,
@@ -14,8 +16,10 @@ import type {
 } from "./types";
 
 export type {
+  ActionResponse,
   AuthResponse,
   PlayResponse,
+  PlaybackActionResponse,
   QueueAddResponse,
   QueueResponse,
   PlayQueueResponse,
@@ -171,22 +175,22 @@ export class MusicDaemonClient {
   /**
    * Pause playback
    */
-  async pause(): Promise<void> {
-    await this.request("/pause", "POST");
+  async pause(): Promise<ActionResponse> {
+    return this.request("/pause", "POST");
   }
 
   /**
    * Resume playback
    */
-  async resume(): Promise<void> {
-    await this.request("/resume", "POST");
+  async resume(): Promise<ActionResponse> {
+    return this.request("/resume", "POST");
   }
 
   /**
    * Stop playback
    */
-  async stop(): Promise<void> {
-    await this.request("/stop", "POST");
+  async stop(): Promise<ActionResponse> {
+    return this.request("/stop", "POST");
   }
 
   /**
@@ -220,22 +224,22 @@ export class MusicDaemonClient {
   /**
    * Clear the queue
    */
-  async clearQueue(): Promise<void> {
-    await this.request("/queue/clear", "POST");
+  async clearQueue(): Promise<ActionResponse> {
+    return this.request("/queue/clear", "POST");
   }
 
   /**
    * Play next track
    */
-  async playNext(): Promise<void> {
-    await this.request("/queue/next", "POST");
+  async playNext(): Promise<PlaybackActionResponse> {
+    return this.request("/queue/next", "POST");
   }
 
   /**
    * Play previous track
    */
-  async playPrevious(): Promise<void> {
-    await this.request("/queue/previous", "POST");
+  async playPrevious(): Promise<PlaybackActionResponse> {
+    return this.request("/queue/previous", "POST");
   }
 
   /**

@@ -18,7 +18,8 @@ program
   .option("--host <host>", "Daemon host address")
   .option("--port <port>", "Daemon port", (val) => parseInt(val, 10))
   .option("--password <password>", "Daemon password")
-  .option("-p, --profile <name>", "Use named connection profile");
+  .option("-p, --profile <name>", "Use named connection profile")
+  .option("--json", "Output results as JSON");
 
 // Client instance (lazily initialized per command)
 let _client: MusicDaemonClient | null = null;
@@ -51,6 +52,32 @@ function getClient(): MusicDaemonClient {
   }
 
   return _client;
+}
+
+/**
+ * Check if --json flag is set on the global program options.
+ */
+function isJsonMode(): boolean {
+  return program.opts().json === true;
+}
+
+/**
+ * Output data as formatted JSON to stdout and exit.
+ * Used by all commands when --json flag is set.
+ */
+function outputJson(data: unknown): never {
+  console.log(JSON.stringify(data, null, 2));
+  process.exit(0);
+}
+
+/**
+ * Output an error as JSON to stderr and exit with code 1.
+ * Used by command error handlers when --json flag is set.
+ */
+function outputJsonError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(JSON.stringify({ error: message }, null, 2));
+  process.exit(1);
 }
 
 // Hook to enable logger before any command
@@ -101,13 +128,19 @@ program
       let selectedItem: SearchResult | null;
 
       // Search for music
-      if (query) {
-        process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
-      } else {
-        process.stdout.write(chalk.gray(`🔍 Browsing music library...\n`));
+      if (!isJsonMode()) {
+        if (query) {
+          process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
+        } else {
+          process.stdout.write(chalk.gray(`🔍 Browsing music library...\n`));
+        }
       }
 
       const searchResult = await getClient().search(query || "");
+
+      if (isJsonMode()) {
+        outputJson(searchResult);
+      }
 
       if (searchResult.count === 0) {
         console.log(chalk.yellow("✗ No results found"));
@@ -273,6 +306,9 @@ program
         process.exit(1);
       }
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to browse:"),
         error instanceof Error ? error.message : error,
@@ -287,9 +323,15 @@ program
   .description("Play/resume current queue")
   .action(async () => {
     try {
-      await getClient().resume();
+      const result = await getClient().resume();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
       console.log(chalk.green("▶ Playback resumed"));
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to play:"),
         error instanceof Error ? error.message : error,
@@ -304,9 +346,15 @@ program
   .description("Pause playback")
   .action(async () => {
     try {
-      await getClient().pause();
+      const result = await getClient().pause();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
       console.log(chalk.yellow("⏸  Playback paused"));
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to pause:"),
         error instanceof Error ? error.message : error,
@@ -320,9 +368,15 @@ program
   .description("Stop playback")
   .action(async () => {
     try {
-      await getClient().stop();
+      const result = await getClient().stop();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
       console.log("✓ Playback stopped");
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         "✗ Failed to stop:",
         error instanceof Error ? error.message : error,
@@ -336,7 +390,6 @@ program
   .description("Search for music in Jellyfin library")
   .argument("<query>", "Search query (searches name, artist, and album)")
   .option("-l, --limit <number>", "Maximum number of results", "20")
-  .option("--json", "Output results as JSON")
   .action(async (query: string, options) => {
     try {
       const limit = parseInt(options.limit, 10);
@@ -347,9 +400,8 @@ program
 
       const result = await getClient().search(query, limit);
 
-      if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
-        return;
+      if (isJsonMode()) {
+        outputJson(result);
       }
 
       if (result.count === 0) {
@@ -400,6 +452,9 @@ program
         console.log(parts.join(" "));
       }
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         "✗ Search failed:",
         error instanceof Error ? error.message : error,
@@ -415,6 +470,10 @@ program
   .action(async () => {
     try {
       const status: PlaybackStatus = await getClient().status();
+
+      if (isJsonMode()) {
+        outputJson(status);
+      }
 
       if (status.state === "stopped") {
         console.log(chalk.gray("⏸  No playback in progress"));
@@ -462,6 +521,9 @@ program
         }
       }
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to get status:"),
         error instanceof Error ? error.message : error,
@@ -480,6 +542,10 @@ const queueCmd = program
     try {
       const result = await getClient().getQueue();
 
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+
       if (result.count === 0) {
         console.log(chalk.yellow("Queue is empty"));
         return;
@@ -554,6 +620,9 @@ const queueCmd = program
         process.exit(1);
       }
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Queue error:"),
         error instanceof Error ? error.message : error,
@@ -571,6 +640,10 @@ queueCmd
     try {
       const result = await getClient().getQueue();
 
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+
       if (result.count === 0) {
         console.log(chalk.yellow("Queue is empty"));
         return;
@@ -645,6 +718,9 @@ queueCmd
         process.exit(1);
       }
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Queue error:"),
         error instanceof Error ? error.message : error,
@@ -658,9 +734,15 @@ queueCmd
   .description("Clear the queue")
   .action(async () => {
     try {
-      await getClient().clearQueue();
+      const result = await getClient().clearQueue();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
       console.log(chalk.green("✓ Queue cleared"));
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to clear queue:"),
         error instanceof Error ? error.message : error,
@@ -693,6 +775,10 @@ queueCmd
           playNow: false,
         });
 
+        if (isJsonMode()) {
+          outputJson(result);
+        }
+
         console.log(
           chalk.green("✓ Added to queue by ID:"),
           chalk.bold(options.id),
@@ -706,8 +792,14 @@ queueCmd
       }
 
       // Search for music
-      process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
+      if (!isJsonMode()) {
+        process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
+      }
       const searchResult = await getClient().search(query!);
+
+      if (isJsonMode()) {
+        outputJson(searchResult);
+      }
 
       if (searchResult.count === 0) {
         console.log(chalk.yellow("✗ No results found"));
@@ -821,6 +913,9 @@ queueCmd
         ),
       );
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to add to queue:"),
         error instanceof Error ? error.message : error,
@@ -835,9 +930,15 @@ program
   .description("Skip to next song in queue")
   .action(async () => {
     try {
-      await getClient().playNext();
+      const result = await getClient().playNext();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
       console.log(chalk.green("⏭  Skipped to next song"));
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to skip:"),
         error instanceof Error ? error.message : error,
@@ -852,9 +953,15 @@ program
   .description("Go to previous song in queue")
   .action(async () => {
     try {
-      await getClient().playPrevious();
+      const result = await getClient().playPrevious();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
       console.log(chalk.green("⏮  Went to previous song"));
     } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
       console.error(
         chalk.red("✗ Failed to go back:"),
         error instanceof Error ? error.message : error,

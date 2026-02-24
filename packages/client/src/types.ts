@@ -101,4 +101,23 @@ export interface QueueOptions {
   playNow?: boolean;
 }
 
+/** Response from POST /pause, /resume, /stop, /queue/clear */
+export interface ActionResponse {
+  success: boolean;
+  message: string;
+}
+
+/** Response from POST /queue/next, /queue/previous */
+export interface PlaybackActionResponse {
+  success: boolean;
+  message: string;
+  state: string;
+  currentItem: {
+    id: string;
+    name: string;
+    artist?: string;
+    album?: string;
+  } | null;
+}
+
 export { PlaybackStatus };
