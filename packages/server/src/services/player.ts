@@ -364,10 +364,28 @@ export class PlayerService {
 
   /**
    * Resume playback
-   * No-op if not paused or not playing
+   * - If paused: resumes the paused track
+   * - If stopped with a restored queue: starts playback from the saved position
+   * - Otherwise: no-op
    */
-  resume(): void {
-    this.backend.resume();
+  async resume(): Promise<void> {
+    // If paused, resume via backend
+    if (this.backend.isPaused() && this.backend.isPlaying()) {
+      this.backend.resume();
+      return;
+    }
+
+    // If not playing but we have a restored queue, start from saved position
+    if (
+      !this.backend.isPlaying() &&
+      this.queue.length > 0 &&
+      this.queuePosition >= 0
+    ) {
+      await this.play();
+      return;
+    }
+
+    // Otherwise no-op (nothing to resume, no queue to play from)
   }
 
   /**

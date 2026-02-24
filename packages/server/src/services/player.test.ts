@@ -307,7 +307,7 @@ describe("PlayerService", () => {
       player.pause();
       expect((await player.getStatus()).state).toBe("paused");
 
-      player.resume();
+      await player.resume();
       expect((await player.getStatus()).state).toBe("playing");
     });
 
@@ -317,12 +317,40 @@ describe("PlayerService", () => {
 
       await player.playFromQueue(0);
 
-      player.resume();
+      await player.resume();
       expect((await player.getStatus()).state).toBe("playing");
     });
 
-    test("does nothing when stopped", () => {
-      player.resume();
+    test("does nothing when stopped with no queue", async () => {
+      await player.resume();
+      expect(player.isPlaying()).toBe(false);
+    });
+
+    test("starts playback from restored queue position when stopped with queue", async () => {
+      const items = createMockQueue(5);
+      player.addToQueue(items);
+
+      // Simulate server restart: restore queue state at position 2
+      player.restoreQueueState({ queue: player.getQueue(), position: 2 });
+
+      // Verify precondition: nothing is playing
+      expect(player.isPlaying()).toBe(false);
+      expect(player.getQueuePosition()).toBe(2);
+
+      // resume() should start playback from the restored position
+      await player.resume();
+
+      expect(player.isPlaying()).toBe(true);
+      expect(player.getQueuePosition()).toBe(2);
+      expect(streamUrlGetterMock).toHaveBeenCalledWith("item-2");
+    });
+
+    test("does nothing when stopped with empty queue", async () => {
+      // No queue, no playback — resume should be a no-op, not throw
+      expect(player.isPlaying()).toBe(false);
+      expect(player.getQueue().length).toBe(0);
+
+      await player.resume();
       expect(player.isPlaying()).toBe(false);
     });
   });

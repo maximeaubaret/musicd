@@ -249,11 +249,12 @@ export function createApiRoutes(
    */
   app.post("/resume", async (c) => {
     try {
-      playerService.resume();
-
+      await playerService.resume();
+      const status = await playerService.getStatus();
       return c.json({
         success: true,
-        message: "Playback resumed",
+        message:
+          status.state === "playing" ? "Playback resumed" : "Nothing to resume",
       });
     } catch (error) {
       if (error instanceof PlayerError) {
