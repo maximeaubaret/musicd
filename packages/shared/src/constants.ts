@@ -12,7 +12,7 @@ export const XDG_DATA_DIR = "musicd";
 export const XDG_AUTH_FILE = "auth.json";
 export const XDG_QUEUE_FILE = "queue.json";
 
-export const APP_VERSION = "2.1.0";
+export const APP_VERSION = "2.2.0";
 
 export const YOUTUBE_HOSTS = [
   "youtube.com",
