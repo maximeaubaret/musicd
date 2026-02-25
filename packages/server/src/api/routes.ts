@@ -2,8 +2,15 @@ import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { z } from "zod";
 import type { JellyfinService } from "../services/jellyfin";
+import { YouTubeService } from "../services/youtube";
 import type { PlayerService } from "../services/player";
-import { JellyfinError, PlayerError, APP_VERSION } from "@musicd/shared";
+import {
+  JellyfinError,
+  PlayerError,
+  YouTubeError,
+  APP_VERSION,
+} from "@musicd/shared";
+import type { QueueItem } from "@musicd/shared";
 
 const PlayRequestSchema = z.object({
   itemId: z.string().min(1, "Item ID is required"),
@@ -78,9 +85,11 @@ function createAuthMiddleware(requiredPassword?: string) {
 
 export function createApiRoutes(
   jellyfinService: JellyfinService,
+  youtubeService: YouTubeService,
   playerService: PlayerService,
   startTime: number,
   daemonPassword?: string,
+  ytDlpAvailable: boolean = false,
 ) {
   const app = new Hono();
 
@@ -150,11 +159,38 @@ export function createApiRoutes(
       // Otherwise, play specific item (add to queue and play)
       const { itemId } = PlayRequestSchema.parse(body);
 
-      // Get item metadata
+      // Auto-detect YouTube URLs
+      if (YouTubeService.isYouTubeUrl(itemId)) {
+        if (!ytDlpAvailable) {
+          return c.json(
+            {
+              success: false,
+              error: "YouTube playback unavailable: yt-dlp is not installed",
+            },
+            503,
+          );
+        }
+
+        const queueItem = await youtubeService.createQueueItem(itemId);
+        playerService.addItems([queueItem], true);
+        await playerService.playFromQueue(0);
+
+        return c.json({
+          success: true,
+          message: "Playing YouTube video",
+          item: {
+            id: queueItem.id,
+            name: queueItem.name,
+            artist: queueItem.artist,
+            source: "youtube",
+          },
+        });
+      }
+
+      // Jellyfin item: get metadata, add to queue, and play
       const item = await jellyfinService.getItem(itemId);
 
-      // Add to queue and play
-      playerService.addToQueue([item], true); // Clear queue and add this item
+      playerService.addJellyfinItems([item], true);
       await playerService.playFromQueue(0);
 
       return c.json({
@@ -187,6 +223,16 @@ export function createApiRoutes(
             error: error.message,
           },
           statusCode,
+        );
+      }
+
+      if (error instanceof YouTubeError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          502,
         );
       }
 
@@ -342,6 +388,7 @@ export function createApiRoutes(
 
   /**
    * POST /api/queue/add - Add items to queue
+   * Accepts Jellyfin item IDs and YouTube URLs in the same request
    */
   app.post("/queue/add", async (c) => {
     try {
@@ -349,29 +396,86 @@ export function createApiRoutes(
       const { itemIds, clearQueue, playNow } =
         QueueAddRequestSchema.parse(body);
 
-      // Fetch all items
-      const items = await Promise.all(
-        itemIds.map((id) => jellyfinService.getItem(id)),
-      );
+      // Partition into YouTube URLs and Jellyfin IDs
+      const youtubeUrls: string[] = [];
+      const jellyfinIds: string[] = [];
 
-      // Expand albums and artists to their tracks
-      const expandedItems = [];
-      for (const item of items) {
-        if (item.Type === "MusicAlbum") {
-          // Get all tracks from the album
-          const tracks = await jellyfinService.getAlbumTracks(item.Id);
-          expandedItems.push(...tracks);
-        } else if (item.Type === "MusicArtist") {
-          // Get all tracks from the artist
-          const tracks = await jellyfinService.getArtistTracks(item.Id);
-          expandedItems.push(...tracks);
-        } else if (item.Type === "Audio") {
-          // It's already a track
-          expandedItems.push(item);
+      for (const id of itemIds) {
+        if (YouTubeService.isYouTubeUrl(id)) {
+          youtubeUrls.push(id);
+        } else {
+          jellyfinIds.push(id);
         }
       }
 
-      if (expandedItems.length === 0) {
+      // Check yt-dlp availability if YouTube URLs are present
+      if (youtubeUrls.length > 0 && !ytDlpAvailable) {
+        return c.json(
+          {
+            success: false,
+            error: "YouTube playback unavailable: yt-dlp is not installed",
+          },
+          503,
+        );
+      }
+
+      // Resolve all items in order, preserving the original sequence
+      const allQueueItems: QueueItem[] = [];
+
+      for (const id of itemIds) {
+        if (YouTubeService.isYouTubeUrl(id)) {
+          // YouTube URL: create queue item via yt-dlp
+          const queueItem = await youtubeService.createQueueItem(id);
+          allQueueItems.push(queueItem);
+        } else {
+          // Jellyfin ID: fetch item and expand albums/artists
+          const item = await jellyfinService.getItem(id);
+
+          if (item.Type === "MusicAlbum") {
+            const tracks = await jellyfinService.getAlbumTracks(item.Id);
+            for (const track of tracks) {
+              allQueueItems.push({
+                id: track.Id,
+                name: track.Name,
+                artist: track.Artists?.[0],
+                album: track.Album,
+                duration: track.RunTimeTicks
+                  ? track.RunTimeTicks / 10000000
+                  : 0,
+                source: "jellyfin",
+                jellyfinItem: track,
+              });
+            }
+          } else if (item.Type === "MusicArtist") {
+            const tracks = await jellyfinService.getArtistTracks(item.Id);
+            for (const track of tracks) {
+              allQueueItems.push({
+                id: track.Id,
+                name: track.Name,
+                artist: track.Artists?.[0],
+                album: track.Album,
+                duration: track.RunTimeTicks
+                  ? track.RunTimeTicks / 10000000
+                  : 0,
+                source: "jellyfin",
+                jellyfinItem: track,
+              });
+            }
+          } else if (item.Type === "Audio") {
+            allQueueItems.push({
+              id: item.Id,
+              name: item.Name,
+              artist: item.Artists?.[0],
+              album: item.Album,
+              duration: item.RunTimeTicks ? item.RunTimeTicks / 10000000 : 0,
+              source: "jellyfin",
+              jellyfinItem: item,
+            });
+          }
+        }
+      }
+
+      if (allQueueItems.length === 0) {
         return c.json(
           {
             success: false,
@@ -382,7 +486,7 @@ export function createApiRoutes(
       }
 
       // Add to queue
-      playerService.addToQueue(expandedItems, clearQueue);
+      playerService.addItems(allQueueItems, clearQueue);
 
       // Play now if requested, OR if nothing is currently playing
       if (playNow || !playerService.isPlaying()) {
@@ -391,8 +495,8 @@ export function createApiRoutes(
 
       return c.json({
         success: true,
-        message: `Added ${expandedItems.length} track${expandedItems.length === 1 ? "" : "s"} to queue`,
-        tracksAdded: expandedItems.length,
+        message: `Added ${allQueueItems.length} track${allQueueItems.length === 1 ? "" : "s"} to queue`,
+        tracksAdded: allQueueItems.length,
         queue: playerService.getQueue(),
       });
     } catch (error) {
@@ -415,6 +519,16 @@ export function createApiRoutes(
             error: error.message,
           },
           statusCode,
+        );
+      }
+
+      if (error instanceof YouTubeError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          502,
         );
       }
 

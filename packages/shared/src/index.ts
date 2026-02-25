@@ -15,6 +15,9 @@ export type {
   JellyfinItem,
   MediaSource,
   PlaybackState,
+  QueueItemBase,
+  JellyfinQueueItem,
+  YouTubeQueueItem,
   QueueItem,
   PlaybackStatus,
   PlayOptions,
@@ -26,6 +29,7 @@ export {
   PlayerError,
   ConfigError,
   AuthenticationError,
+  YouTubeError,
 } from "./types";
 
 // Schemas

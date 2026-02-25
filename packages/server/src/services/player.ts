@@ -1,12 +1,19 @@
-import type { PlaybackStatus, JellyfinItem, QueueItem } from "@musicd/shared";
+import type {
+  PlaybackStatus,
+  JellyfinItem,
+  QueueItem,
+  JellyfinQueueItem,
+} from "@musicd/shared";
 import { PlayerError } from "@musicd/shared";
 import type { PlaybackBackend } from "./playback/backend";
 
+export type StreamUrlResolver = (item: QueueItem) => Promise<string>;
+
 export class PlayerService {
-  private currentItem: JellyfinItem | null = null;
+  private currentItem: QueueItem | null = null;
   private queue: QueueItem[] = [];
   private queuePosition: number = -1; // -1 means no queue, 0+ is current position
-  private streamUrlGetter: ((itemId: string) => Promise<string>) | null = null;
+  private streamUrlResolvers: Map<string, StreamUrlResolver> = new Map();
   private playSessionId: string | null = null;
   private progressInterval: NodeJS.Timeout | null = null;
   private playbackReporter: {
@@ -49,11 +56,11 @@ export class PlayerService {
   }
 
   /**
-   * Set the callback to get stream URLs
-   * This is needed to auto-play next song in queue
+   * Register a stream URL resolver for a source type
+   * Each source (jellyfin, youtube, etc.) needs its own resolver
    */
-  setStreamUrlGetter(getter: (itemId: string) => Promise<string>): void {
-    this.streamUrlGetter = getter;
+  registerStreamUrlResolver(source: string, resolver: StreamUrlResolver): void {
+    this.streamUrlResolvers.set(source, resolver);
   }
 
   /**
@@ -116,7 +123,7 @@ export class PlayerService {
   /**
    * Play a URL (internal method)
    */
-  private async playInternal(url: string, item: JellyfinItem): Promise<void> {
+  private async playInternal(url: string, item: QueueItem): Promise<void> {
     // Stop any existing playback
     if (this.backend.isPlaying()) {
       await this.stop();
@@ -129,20 +136,24 @@ export class PlayerService {
       // Play through backend (no ffplay details here!)
       await this.backend.play(url);
 
-      // Report playback start to Jellyfin
-      if (this.playbackReporter) {
+      // Report playback start to Jellyfin (only for Jellyfin items)
+      if (this.playbackReporter && item.source === "jellyfin") {
         try {
           this.playSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-          await this.playbackReporter.reportStart(item.Id, this.playSessionId);
+          await this.playbackReporter.reportStart(item.id, this.playSessionId);
 
           // Set up progress reporting every 10 seconds
           this.progressInterval = setInterval(async () => {
-            if (this.currentItem && this.playSessionId) {
+            if (
+              this.currentItem &&
+              this.currentItem.source === "jellyfin" &&
+              this.playSessionId
+            ) {
               const position = this.backend.getPosition();
               const ticks = Math.floor(position * 10000000);
               try {
                 await this.playbackReporter!.reportProgress(
-                  this.currentItem.Id,
+                  this.currentItem.id,
                   this.playSessionId,
                   ticks,
                   this.backend.isPaused(),
@@ -200,25 +211,33 @@ export class PlayerService {
   }
 
   /**
-   * Add items to the queue
+   * Add pre-built queue items (source-agnostic)
    */
-  addToQueue(items: JellyfinItem[], clearQueue: boolean = false): void {
+  addItems(items: QueueItem[], clearQueue: boolean = false): void {
     if (clearQueue) {
       this.queue = [];
       this.queuePosition = -1;
     }
 
-    const queueItems: QueueItem[] = items.map((item) => ({
+    this.queue.push(...items);
+    this.triggerStateSave();
+  }
+
+  /**
+   * Add Jellyfin items to the queue (convenience method)
+   */
+  addJellyfinItems(items: JellyfinItem[], clearQueue: boolean = false): void {
+    const queueItems: JellyfinQueueItem[] = items.map((item) => ({
       id: item.Id,
       name: item.Name,
       artist: item.Artists?.[0],
       album: item.Album,
       duration: item.RunTimeTicks ? item.RunTimeTicks / 10000000 : 0,
+      source: "jellyfin" as const,
       jellyfinItem: item,
     }));
 
-    this.queue.push(...queueItems);
-    this.triggerStateSave();
+    this.addItems(queueItems, clearQueue);
   }
 
   /**
@@ -229,16 +248,19 @@ export class PlayerService {
       throw new PlayerError("Invalid queue position");
     }
 
-    if (!this.streamUrlGetter) {
-      throw new PlayerError("Stream URL getter not configured");
+    const item = this.queue[position];
+    const resolver = this.streamUrlResolvers.get(item.source);
+    if (!resolver) {
+      throw new PlayerError(
+        `No stream URL resolver registered for source: ${item.source}`,
+      );
     }
 
     this.queuePosition = position;
     this.triggerStateSave();
-    const item = this.queue[position];
 
-    const streamUrl = await this.streamUrlGetter(item.id);
-    await this.playInternal(streamUrl, item.jellyfinItem);
+    const streamUrl = await resolver(item);
+    await this.playInternal(streamUrl, item);
   }
 
   /**
@@ -397,13 +419,18 @@ export class PlayerService {
       return;
     }
 
-    // Report playback stopped before cleanup
-    if (this.playbackReporter && this.currentItem && this.playSessionId) {
+    // Report playback stopped before cleanup (only for Jellyfin items)
+    if (
+      this.playbackReporter &&
+      this.currentItem &&
+      this.currentItem.source === "jellyfin" &&
+      this.playSessionId
+    ) {
       try {
         const position = this.backend.getPosition();
         const ticks = Math.floor(position * 10000000);
         await this.playbackReporter.reportStop(
-          this.currentItem.Id,
+          this.currentItem.id,
           this.playSessionId,
           ticks,
         );
@@ -432,18 +459,17 @@ export class PlayerService {
     }
 
     const position = this.backend.getPosition();
-    const duration = this.currentItem?.RunTimeTicks
-      ? this.currentItem.RunTimeTicks / 10000000 // Convert ticks to seconds
-      : 0;
+    const duration = this.currentItem?.duration ?? 0;
 
     return {
       state: this.backend.isPaused() ? "paused" : "playing",
       currentItem: this.currentItem
         ? {
-            id: this.currentItem.Id,
-            name: this.currentItem.Name,
-            artist: this.currentItem.Artists?.[0],
-            album: this.currentItem.Album,
+            id: this.currentItem.id,
+            name: this.currentItem.name,
+            artist: this.currentItem.artist,
+            album: this.currentItem.album,
+            source: this.currentItem.source,
           }
         : null,
       position: Math.min(position, duration),
@@ -470,15 +496,20 @@ export class PlayerService {
       this.progressInterval = null;
     }
 
-    // Report playback stopped if we have an active session
+    // Report playback stopped if we have an active session (only for Jellyfin items)
     // This handles the case where the process exits naturally
-    if (this.playbackReporter && this.currentItem && this.playSessionId) {
+    if (
+      this.playbackReporter &&
+      this.currentItem &&
+      this.currentItem.source === "jellyfin" &&
+      this.playSessionId
+    ) {
       const position = this.backend.getPosition();
       const ticks = Math.floor(position * 10000000);
 
       // Fire and forget - don't wait for the report
       this.playbackReporter
-        .reportStop(this.currentItem.Id, this.playSessionId, ticks)
+        .reportStop(this.currentItem.id, this.playSessionId, ticks)
         .catch((error) => {
           console.error("Failed to report playback stopped in cleanup:", error);
         });

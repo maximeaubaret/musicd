@@ -10,6 +10,7 @@ import {
 } from "@musicd/shared";
 import type { ServerConfig } from "@musicd/shared";
 import { JellyfinService } from "./services/jellyfin";
+import { YouTubeService } from "./services/youtube";
 import { PlayerService } from "./services/player";
 import { FFPlayBackend } from "./services/playback";
 import { createApiRoutes } from "./api/routes";
@@ -75,6 +76,7 @@ async function main() {
 
   // Initialize services
   const jellyfinService = new JellyfinService(config.jellyfin);
+  const youtubeService = new YouTubeService();
   const backend = new FFPlayBackend(
     config.audio?.device || DEFAULT_AUDIO_DEVICE,
     logger.isEnabled(),
@@ -82,10 +84,27 @@ async function main() {
   const playerService = new PlayerService(backend);
   const startTime = Date.now();
 
-  // Configure player service with stream URL getter for queue auto-play
-  playerService.setStreamUrlGetter((itemId) =>
-    jellyfinService.getStreamUrl(itemId),
-  );
+  // Check yt-dlp availability (non-fatal)
+  const ytDlpAvailable = await youtubeService.checkAvailability();
+  if (ytDlpAvailable) {
+    console.log("✓ yt-dlp available — YouTube playback enabled");
+  } else {
+    console.warn(
+      "⚠ yt-dlp not found — YouTube playback disabled. Install: pip install yt-dlp",
+    );
+  }
+
+  // Register stream URL resolvers for each source type
+  playerService.registerStreamUrlResolver("jellyfin", (item) => {
+    return jellyfinService.getStreamUrl(item.id);
+  });
+
+  playerService.registerStreamUrlResolver("youtube", (item) => {
+    if (item.source !== "youtube") {
+      throw new Error("Expected youtube source");
+    }
+    return youtubeService.getStreamUrl(item.youtubeUrl);
+  });
 
   // Configure player service with playback reporter for Jellyfin play tracking
   playerService.setPlaybackReporter({
@@ -173,9 +192,11 @@ async function main() {
     "/api",
     createApiRoutes(
       jellyfinService,
+      youtubeService,
       playerService,
       startTime,
       config.daemon.password,
+      ytDlpAvailable,
     ),
   );
 
@@ -200,10 +221,14 @@ async function main() {
   );
   console.log("\nAPI Endpoints:");
   console.log(`  POST /api/auth                - Authenticate with Jellyfin`);
-  console.log(`  POST /api/play                - Play a Jellyfin item`);
+  console.log(
+    `  POST /api/play                - Play an item (Jellyfin ID or YouTube URL)`,
+  );
   console.log(`  POST /api/stop                - Stop playback`);
   console.log(`  GET  /api/status              - Get playback status`);
-  console.log(`  POST /api/queue/add           - Add items to queue`);
+  console.log(
+    `  POST /api/queue/add           - Add items to queue (Jellyfin IDs or YouTube URLs)`,
+  );
   console.log(`  GET  /api/queue               - Get current queue`);
   console.log(`  POST /api/queue/clear         - Clear queue`);
   console.log(`  POST /api/queue/next          - Skip to next song`);

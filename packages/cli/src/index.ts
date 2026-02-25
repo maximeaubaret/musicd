@@ -3,7 +3,11 @@ import { Command } from "commander";
 import chalk from "chalk";
 import select from "./select-with-quit";
 import expandableSelect from "./expandable-select";
-import { resolveDaemonConnection, APP_VERSION } from "@musicd/shared";
+import {
+  resolveDaemonConnection,
+  APP_VERSION,
+  isYouTubeUrl,
+} from "@musicd/shared";
 import type { QueueItem } from "@musicd/shared";
 import type { PlaybackStatus, SearchResult, TrackInfo } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
@@ -97,6 +101,28 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+const MAX_TITLE_LENGTH = 50;
+
+/**
+ * Truncate a string to a maximum length, appending an ellipsis if truncated.
+ */
+function truncateTitle(title: string): string {
+  if (title.length <= MAX_TITLE_LENGTH) {
+    return title;
+  }
+  return title.slice(0, MAX_TITLE_LENGTH) + "\u2026";
+}
+
+/**
+ * Get a source indicator for queue items.
+ */
+function sourceIndicator(item: { source?: string }): string {
+  if (item.source === "youtube") {
+    return chalk.red("[YouTube]");
+  }
+  return chalk.magenta("[Jellyfin]");
+}
+
 // Define CLI commands
 program
   .name("musicd")
@@ -172,7 +198,7 @@ program
             parts.push(typeIcon);
           }
 
-          parts.push(chalk.bold.white(item.name));
+          parts.push(chalk.bold.white(truncateTitle(item.name)));
 
           if (item.artist && item.type !== "MusicArtist") {
             parts.push(chalk.cyan(item.artist));
@@ -429,7 +455,7 @@ program
                 : "📀";
         parts.push(typeIcon);
 
-        parts.push(chalk.bold.white(item.name));
+        parts.push(chalk.bold.white(truncateTitle(item.name)));
 
         if (item.artist) {
           parts.push(chalk.cyan(`by ${item.artist}`));
@@ -489,7 +515,12 @@ program
       } else {
         // Currently playing or paused
         const parts = [];
-        parts.push(chalk.bold.white(status.currentItem?.name || "Unknown"));
+
+        parts.push(
+          chalk.bold.white(
+            truncateTitle(status.currentItem?.name || "Unknown"),
+          ),
+        );
 
         if (status.currentItem?.artist) {
           parts.push(chalk.cyan(status.currentItem.artist));
@@ -497,6 +528,11 @@ program
 
         if (status.currentItem?.album) {
           parts.push(chalk.blue(status.currentItem.album));
+        }
+
+        // Source indicator
+        if (status.currentItem) {
+          parts.push(sourceIndicator(status.currentItem));
         }
 
         const stateLabel =
@@ -564,7 +600,7 @@ const queueCmd = program
         parts.push(chalk.gray(`${(index + 1).toString().padStart(2, " ")}.`));
 
         // Track name
-        parts.push(chalk.bold.white(item.name));
+        parts.push(chalk.bold.white(truncateTitle(item.name)));
 
         // Artist
         if (item.artist) {
@@ -580,6 +616,9 @@ const queueCmd = program
         if (item.duration > 0) {
           parts.push(chalk.gray(formatDuration(item.duration)));
         }
+
+        // Source indicator
+        parts.push(sourceIndicator(item));
 
         return {
           name: parts.join(" · "),
@@ -662,7 +701,7 @@ queueCmd
         parts.push(chalk.gray(`${(index + 1).toString().padStart(2, " ")}.`));
 
         // Track name
-        parts.push(chalk.bold.white(item.name));
+        parts.push(chalk.bold.white(truncateTitle(item.name)));
 
         // Artist
         if (item.artist) {
@@ -678,6 +717,9 @@ queueCmd
         if (item.duration > 0) {
           parts.push(chalk.gray(formatDuration(item.duration)));
         }
+
+        // Source indicator
+        parts.push(sourceIndicator(item));
 
         return {
           name: parts.join(" · "),
@@ -753,22 +795,59 @@ queueCmd
 
 queueCmd
   .command("add")
-  .description("Add to queue by search query or ID")
-  .argument("[query]", "Search query")
+  .description("Add to queue by search query, Jellyfin ID, or YouTube URL")
+  .argument("[query]", "Search query or YouTube URL")
   .option("-i, --id <itemId>", "Add by Jellyfin item ID")
+  .option("--youtube-url <url>", "Add a YouTube URL to the queue")
   .action(async (query: string | undefined, options) => {
     try {
-      // Validate that either query or --id is provided
-      if (!query && !options.id) {
+      // Validate that at least one source is provided
+      if (!query && !options.id && !options.youtubeUrl) {
         console.error(
-          chalk.red("✗ Error: Either <query> or --id must be provided"),
+          chalk.red(
+            "✗ Error: Either <query>, --id, or --youtube-url must be provided",
+          ),
         );
         console.log(chalk.gray("Usage: musicd queue add <query>"));
         console.log(chalk.gray("   or: musicd queue add --id <itemId>"));
+        console.log(chalk.gray("   or: musicd queue add --youtube-url <url>"));
         process.exit(1);
       }
 
-      // If --id is provided, add directly by ID
+      // If --youtube-url is provided, add directly as YouTube URL
+      if (options.youtubeUrl) {
+        if (!isYouTubeUrl(options.youtubeUrl)) {
+          console.error(chalk.red("✗ Error: Invalid YouTube URL"));
+          process.exit(1);
+        }
+
+        if (!isJsonMode()) {
+          process.stdout.write(chalk.gray(`[YouTube] Adding YouTube URL...\n`));
+        }
+
+        const result = await getClient().addToQueue([options.youtubeUrl], {
+          clearQueue: false,
+          playNow: false,
+        });
+
+        if (isJsonMode()) {
+          outputJson(result);
+        }
+
+        console.log(
+          chalk.green("✓ Added to queue:"),
+          chalk.red("[YouTube]"),
+          chalk.bold(options.youtubeUrl),
+        );
+        console.log(
+          chalk.gray(
+            `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+          ),
+        );
+        return;
+      }
+
+      // If --id is provided, add directly by Jellyfin ID (no URL detection)
       if (options.id) {
         const result = await getClient().addToQueue([options.id], {
           clearQueue: false,
@@ -791,7 +870,37 @@ queueCmd
         return;
       }
 
-      // Search for music
+      // Auto-detect YouTube URLs in the query argument
+      if (query && isYouTubeUrl(query)) {
+        if (!isJsonMode()) {
+          process.stdout.write(
+            chalk.gray(`[YouTube] Detected YouTube URL, adding to queue...\n`),
+          );
+        }
+
+        const result = await getClient().addToQueue([query], {
+          clearQueue: false,
+          playNow: false,
+        });
+
+        if (isJsonMode()) {
+          outputJson(result);
+        }
+
+        console.log(
+          chalk.green("✓ Added to queue:"),
+          chalk.red("[YouTube]"),
+          chalk.bold(query),
+        );
+        console.log(
+          chalk.gray(
+            `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+          ),
+        );
+        return;
+      }
+
+      // Search for music in Jellyfin
       if (!isJsonMode()) {
         process.stdout.write(chalk.gray(`🔍 Searching for "${query}"...\n`));
       }
@@ -833,7 +942,7 @@ queueCmd
             parts.push(typeIcon);
           }
 
-          parts.push(chalk.bold.white(item.name));
+          parts.push(chalk.bold.white(truncateTitle(item.name)));
 
           if (item.artist && item.type !== "MusicArtist") {
             parts.push(chalk.cyan(item.artist));

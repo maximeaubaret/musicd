@@ -100,14 +100,31 @@ export interface MediaSource {
 // Playback types
 export type PlaybackState = "playing" | "paused" | "stopped";
 
-export interface QueueItem {
+/** Common fields shared across all queue item sources */
+export interface QueueItemBase {
   id: string;
   name: string;
   artist?: string;
   album?: string;
   duration: number; // seconds
+}
+
+/** Queue item sourced from Jellyfin */
+export interface JellyfinQueueItem extends QueueItemBase {
+  source: "jellyfin";
   jellyfinItem: JellyfinItem;
 }
+
+/** Queue item sourced from YouTube */
+export interface YouTubeQueueItem extends QueueItemBase {
+  source: "youtube";
+  youtubeUrl: string; // Original URL (for re-extraction on restore)
+  videoId: string;
+  uploader?: string;
+}
+
+/** A queue item from any supported source */
+export type QueueItem = JellyfinQueueItem | YouTubeQueueItem;
 
 export interface PlaybackStatus {
   state: PlaybackState;
@@ -116,6 +133,7 @@ export interface PlaybackStatus {
     name: string;
     artist?: string;
     album?: string;
+    source?: "jellyfin" | "youtube";
   } | null;
   position: number; // seconds
   duration: number; // seconds
@@ -167,5 +185,12 @@ export class AuthenticationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AuthenticationError";
+  }
+}
+
+export class YouTubeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "YouTubeError";
   }
 }

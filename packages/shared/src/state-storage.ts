@@ -8,7 +8,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import type { QueueItem } from "./types";
+import type { QueueItem, JellyfinItem } from "./types";
 import { XDG_DATA_DIR, XDG_QUEUE_FILE } from "./constants";
 
 /**
@@ -34,7 +34,7 @@ export interface QueueState {
   version: number;
 }
 
-const CURRENT_STATE_VERSION = 1;
+const CURRENT_STATE_VERSION = 2;
 
 /**
  * Save queue state to disk
@@ -64,6 +64,36 @@ export function saveQueueState(queue: QueueItem[], position: number): void {
 }
 
 /**
+ * Migrate v1 queue state to v2 by adding source: "jellyfin" to all items.
+ * V1 items always have jellyfinItem but no source field.
+ */
+function migrateV1toV2(parsed: {
+  queue: {
+    id: string;
+    name: string;
+    artist?: string;
+    album?: string;
+    duration: number;
+    jellyfinItem: JellyfinItem;
+  }[];
+  queuePosition: number;
+  savedAt: number;
+  version: number;
+}): QueueState {
+  const migratedQueue: QueueItem[] = parsed.queue.map((item) => ({
+    ...item,
+    source: "jellyfin" as const,
+  }));
+
+  return {
+    queue: migratedQueue,
+    queuePosition: parsed.queuePosition,
+    savedAt: parsed.savedAt,
+    version: CURRENT_STATE_VERSION,
+  };
+}
+
+/**
  * Load queue state from disk
  */
 export function loadQueueState(): QueueState | null {
@@ -88,6 +118,18 @@ export function loadQueueState(): QueueState | null {
         `Queue state version ${parsed.version} is newer than supported version ${CURRENT_STATE_VERSION}, ignoring`,
       );
       return null;
+    }
+
+    // Migrate v1 -> v2: add source: "jellyfin" to all items
+    if (parsed.version === 1) {
+      const migrated = migrateV1toV2(parsed);
+      // Re-save with new version
+      try {
+        saveQueueState(migrated.queue, migrated.queuePosition);
+      } catch {
+        // Non-fatal: migration still works in memory even if re-save fails
+      }
+      return migrated;
     }
 
     return parsed as QueueState;

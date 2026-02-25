@@ -13,3 +13,24 @@ export const XDG_AUTH_FILE = "auth.json";
 export const XDG_QUEUE_FILE = "queue.json";
 
 export const APP_VERSION = "2.1.0";
+
+export const YOUTUBE_HOSTS = [
+  "youtube.com",
+  "www.youtube.com",
+  "youtu.be",
+  "m.youtube.com",
+  "music.youtube.com",
+];
+
+/**
+ * Check if a string is a YouTube URL.
+ * Recognizes youtube.com, www.youtube.com, youtu.be, m.youtube.com, music.youtube.com.
+ */
+export function isYouTubeUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return YOUTUBE_HOSTS.includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
