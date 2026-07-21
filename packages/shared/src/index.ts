@@ -38,6 +38,9 @@ export {
   // CLI schemas
   DaemonProfileSchema,
   CliConfigSchema,
+  PortStringSchema,
+  QueueIndexStringSchema,
+  SearchLimitStringSchema,
   // Server schemas
   JellyfinConfigSchema,
   AudioConfigSchema,

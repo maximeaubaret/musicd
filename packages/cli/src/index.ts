@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import chalk from "chalk";
 import select from "./select-with-quit";
 import expandableSelect from "./expandable-select";
@@ -7,6 +7,8 @@ import {
   resolveDaemonConnection,
   APP_VERSION,
   isYouTubeUrl,
+  PortStringSchema,
+  SearchLimitStringSchema,
 } from "@musicd/shared";
 import type { QueueItem } from "@musicd/shared";
 import type { PlaybackStatus, SearchResult, TrackInfo } from "@musicd/client";
@@ -16,11 +18,29 @@ import { logger } from "./logger";
 
 const program = new Command();
 
+function parsePort(value: string): number {
+  const result = PortStringSchema.safeParse(value);
+  if (!result.success) {
+    throw new InvalidArgumentError("Port must be an integer from 1 to 65535");
+  }
+
+  return result.data;
+}
+
+function parseSearchLimit(value: string): number {
+  const result = SearchLimitStringSchema.safeParse(value);
+  if (!result.success) {
+    throw new InvalidArgumentError("Limit must be an integer from 1 to 100");
+  }
+
+  return result.data;
+}
+
 // Global options for daemon connection
 program
   .option("--print-logs", "Enable debug logging")
   .option("--host <host>", "Daemon host address")
-  .option("--port <port>", "Daemon port", (val) => parseInt(val, 10))
+  .option("--port <port>", "Daemon port", parsePort)
   .option("--password <password>", "Daemon password")
   .option("-p, --profile <name>", "Use named connection profile")
   .option("--json", "Output results as JSON");
@@ -415,16 +435,15 @@ program
   .command("search")
   .description("Search for music in Jellyfin library")
   .argument("<query>", "Search query (searches name, artist, and album)")
-  .option("-l, --limit <number>", "Maximum number of results", "20")
+  .option(
+    "-l, --limit <number>",
+    "Maximum number of results",
+    parseSearchLimit,
+    20,
+  )
   .action(async (query: string, options) => {
     try {
-      const limit = parseInt(options.limit, 10);
-      if (isNaN(limit) || limit < 1 || limit > 100) {
-        console.error("✗ Limit must be between 1 and 100");
-        process.exit(1);
-      }
-
-      const result = await getClient().search(query, limit);
+      const result = await getClient().search(query, options.limit);
 
       if (isJsonMode()) {
         outputJson(result);

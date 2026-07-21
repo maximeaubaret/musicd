@@ -137,3 +137,175 @@ describe("API authentication", () => {
     });
   });
 });
+
+describe("POST /api/play validation", () => {
+  test("an absent itemId selects smart play", async () => {
+    let playCalls = 0;
+    const app = createTestApp({
+      ...playerService,
+      play: async () => {
+        playCalls += 1;
+      },
+      getStatus: async () => ({
+        state: "playing",
+        currentItem: null,
+        position: 0,
+        duration: 0,
+        queue: [],
+        queuePosition: -1,
+        queueMode: { loop: false, random: false },
+      }),
+    });
+
+    const response = await app.request("/api/play", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      message: "Playback started",
+      state: "playing",
+      currentItem: null,
+    });
+    expect(playCalls).toBe(1);
+  });
+
+  test("explicitly invalid itemId values return a structured response", async () => {
+    const app = createTestApp();
+
+    for (const itemId of ["", null, 42]) {
+      const response = await app.request("/api/play", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ itemId }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({
+        success: false,
+        error: "Invalid request",
+        details: expect.any(Array),
+      });
+    }
+  });
+
+  test("malformed JSON returns a structured response", async () => {
+    const app = createTestApp();
+
+    const response = await app.request("/api/play", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      },
+      body: "{",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      success: false,
+      error: "Invalid request",
+      details: expect.any(Array),
+    });
+  });
+});
+
+describe("API integer input validation", () => {
+  test("queue indices reject incomplete and negative integer strings", async () => {
+    const app = createTestApp();
+
+    for (const route of ["remove", "play"]) {
+      for (const index of ["1junk", "1.5", "-1", "9007199254740992"]) {
+        const response = await app.request(`/api/queue/${route}/${index}`, {
+          method: "POST",
+          headers: { Authorization: "Bearer secret" },
+        });
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({
+          success: false,
+          error: "Invalid index parameter",
+        });
+      }
+    }
+  });
+
+  test("complete non-negative queue indices reach the queue boundary", async () => {
+    let removedIndex: number | undefined;
+    const app = createTestApp({
+      ...playerService,
+      removeFromQueue: (index) => {
+        removedIndex = index;
+      },
+      getQueue: () => [],
+      getQueuePosition: () => -1,
+    });
+
+    const response = await app.request("/api/queue/remove/0", {
+      method: "POST",
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(removedIndex).toBe(0);
+  });
+
+  test("search limits reject malformed, empty, and out-of-range values", async () => {
+    const app = createTestApp();
+
+    for (const limit of ["1junk", "1.5", "", "0", "101"]) {
+      const response = await app.request(
+        `/api/search?q=test&limit=${encodeURIComponent(limit)}`,
+        { headers: { Authorization: "Bearer secret" } },
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        success: false,
+        error: "Limit must be between 1 and 100",
+      });
+    }
+  });
+
+  test("search limit bounds are accepted", async () => {
+    const acceptedLimits: number[] = [];
+    const app = createApp({
+      jellyfinService: {
+        ...jellyfinService,
+        search: async (_query, limit) => {
+          if (limit === undefined) {
+            throw new Error("Expected the API to provide a search limit");
+          }
+          acceptedLimits.push(limit);
+          return [];
+        },
+      },
+      youtubeService,
+      playerService,
+      clock,
+      startTime: 1_000,
+      daemonPassword: "secret",
+      ytDlpAvailable: false,
+    });
+
+    for (const limit of [1, 100]) {
+      const response = await app.request(`/api/search?q=test&limit=${limit}`, {
+        headers: { Authorization: "Bearer secret" },
+      });
+
+      expect(response.status).toBe(200);
+    }
+    expect(acceptedLimits).toEqual([1, 100]);
+  });
+});

@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+const CompleteIntegerStringSchema = z.string().regex(/^\d+$/).transform(Number);
+
+export const PortStringSchema = CompleteIntegerStringSchema.pipe(
+  z.number().int().min(1).max(65535),
+);
+
+export const QueueIndexStringSchema = CompleteIntegerStringSchema.pipe(
+  z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+);
+
+export const SearchLimitStringSchema = CompleteIntegerStringSchema.pipe(
+  z.number().int().min(1).max(100),
+);
+
 // ============================================
 // CLI Config Schemas
 // ============================================
