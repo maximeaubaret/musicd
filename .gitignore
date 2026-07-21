@@ -19,6 +19,11 @@ bin/
 *.log
 logs/
 
+# Sandcastle runtime state
+.sandcastle/.env
+.sandcastle/logs/
+.sandcastle/worktrees/
+
 # IDE
 .vscode/
 .idea/

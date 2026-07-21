@@ -422,3 +422,28 @@ This was found by:
 - The Jellyfin API documentation at jellyfin.org/docs focuses on server setup, not API details
 - Always verify endpoint behavior using the OpenAPI spec or source code
 - Don't assume what fields are searched without checking the spec
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default five-label triage vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses the single-context layout. See `docs/agents/domain.md`.
+
+### Sandcastle
+
+Sandcastle runs unassigned, unblocked `ready-for-agent` GitHub issues through one
+fresh `/implement` worker per issue. See `.sandcastle/README.md` before running it.
+Preview selection with `bun run sandcastle:dry-run`; run the queue with
+`bun run sandcastle`.
+
+Issues produced by `/to-tickets` are already agent-ready and must not be triaged
+again. Sandcastle defaults to sequential execution; only raise
+`SANDCASTLE_PARALLEL_ISSUES` for genuinely independent frontier issues.

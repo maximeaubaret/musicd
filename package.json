@@ -16,9 +16,14 @@
     "lint": "bun run --filter '*' lint",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf packages/*/dist bin/",
-    "test": "bun test"
+    "test": "bun test",
+    "sandcastle": "bun .sandcastle/main.mts",
+    "sandcastle:build-image": "bunx sandcastle docker build-image --image-name musicd-sandcastle:latest",
+    "sandcastle:dry-run": "SANDCASTLE_DRY_RUN=1 bun .sandcastle/main.mts",
+    "sandcastle:test": "bun test ./.sandcastle/github-issues.test.ts"
   },
   "devDependencies": {
+    "@ai-hero/sandcastle": "0.12.0",
     "@types/bun": "^1.3.9",
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^8.56.0",
