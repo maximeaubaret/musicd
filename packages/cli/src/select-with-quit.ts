@@ -19,7 +19,7 @@ import type { PartialDeep } from "@inquirer/type";
 import { styleText } from "node:util";
 import figures from "@inquirer/figures";
 
-type SelectTheme = {
+interface SelectTheme {
   icon: { cursor: string };
   style: {
     disabled: (text: string) => string;
@@ -28,7 +28,7 @@ type SelectTheme = {
   };
   i18n: { disabledError: string };
   indexMode: "hidden" | "number";
-};
+}
 
 const selectTheme: SelectTheme = {
   icon: { cursor: figures.pointer },
@@ -47,31 +47,39 @@ const selectTheme: SelectTheme = {
   indexMode: "hidden",
 };
 
-type Choice<Value> = {
+interface ChoiceHierarchy {
+  expandable?: boolean;
+  parentId?: string;
+  isChild?: boolean;
+  id?: string;
+}
+
+interface Choice<Value> extends ChoiceHierarchy {
   value: Value;
   name?: string;
   description?: string;
   short?: string;
   disabled?: boolean | string;
   type?: never;
-};
+}
 
-type NormalizedChoice<Value> = {
+interface NormalizedChoice<Value> extends ChoiceHierarchy {
   value: Value;
   name: string;
   description?: string;
   short: string;
   disabled: boolean | string;
-};
+}
 
-type SelectConfig<Value> = {
+interface SelectConfig<Value> {
   message: string;
   choices: ReadonlyArray<Choice<Value>>;
   pageSize?: number;
   loop?: boolean;
   default?: NoInfer<Value>;
   theme?: PartialDeep<Theme<SelectTheme>>;
-};
+  onExpand?: (value: Value) => Promise<ReadonlyArray<Choice<Value>>>;
+}
 
 function isSelectable<Value>(
   item: NormalizedChoice<Value> | Separator,
@@ -95,6 +103,10 @@ function normalizeChoices<Value>(
       name,
       short: choice.short ?? name,
       disabled: choice.disabled ?? false,
+      expandable: choice.expandable,
+      parentId: choice.parentId,
+      isChild: choice.isChild,
+      id: choice.id,
     };
 
     if (choice.description) {
@@ -107,15 +119,16 @@ function normalizeChoices<Value>(
 
 export default createPrompt(
   <Value>(config: SelectConfig<Value>, done: (value: Value | null) => void) => {
-    const { loop = true, pageSize = 7 } = config;
+    const { loop = true, pageSize = 7, onExpand } = config;
     const theme = makeTheme<SelectTheme>(selectTheme, config.theme);
     const [status, setStatus] = useState<Status>("idle");
     const prefix = usePrefix({ status, theme });
 
-    const items = useMemo(
-      () => normalizeChoices(config.choices),
-      [config.choices],
+    const [items, setItems] = useState<Array<NormalizedChoice<Value>>>(() =>
+      normalizeChoices(config.choices),
     );
+    const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    const [loading, setLoading] = useState(false);
 
     const bounds = useMemo(() => {
       const first = items.findIndex(isNavigable);
@@ -144,15 +157,60 @@ export default createPrompt(
     const selectedChoice = items[active] as NormalizedChoice<Value>;
     const [errorMsg, setError] = useState<string>();
 
-    useKeypress((key, rl) => {
+    useKeypress(async (key, rl) => {
       if (errorMsg) {
         setError(undefined);
+      }
+
+      if (loading) {
+        return;
       }
 
       // Handle 'q' to quit
       if (key.name === "q") {
         setStatus("done");
         done(null);
+        return;
+      }
+
+      if (key.name === "tab" && selectedChoice.expandable && onExpand) {
+        const itemId = selectedChoice.id;
+        if (!itemId) {
+          setError("Cannot expand item without ID");
+          return;
+        }
+
+        if (expanded.has(itemId)) {
+          const newExpanded = new Set(expanded);
+          newExpanded.delete(itemId);
+          setExpanded(newExpanded);
+
+          const newItems = items.filter((item) => item.parentId !== itemId);
+          setItems(newItems);
+          if (active >= newItems.length) {
+            setActive(newItems.length - 1);
+          }
+        } else {
+          setLoading(true);
+          try {
+            const childChoices = await onExpand(selectedChoice.value);
+            const normalizedChildren = normalizeChoices(childChoices);
+            const parentIndex = items.findIndex((item) => item.id === itemId);
+            setItems([
+              ...items.slice(0, parentIndex + 1),
+              ...normalizedChildren,
+              ...items.slice(parentIndex + 1),
+            ]);
+
+            const newExpanded = new Set(expanded);
+            newExpanded.add(itemId);
+            setExpanded(newExpanded);
+          } catch (error) {
+            setError(`Failed to expand: ${String(error)}`);
+          } finally {
+            setLoading(false);
+          }
+        }
         return;
       }
 
@@ -193,6 +251,9 @@ export default createPrompt(
     const helpLine = theme.style.keysHelpTip([
       ["↑↓/jk", "navigate"],
       ["⏎", "select"],
+      ...(selectedChoice.expandable
+        ? [["tab", "expand"] as [string, string]]
+        : []),
       ["q", "quit"],
     ]);
 
@@ -205,18 +266,25 @@ export default createPrompt(
         }
 
         const cursor = isActive ? theme.icon.cursor : " ";
+        const indent = item.isChild ? "  " : "";
+        const expandIndicator =
+          item.expandable && !item.isChild
+            ? expanded.has(item.id ?? "")
+              ? "▼ "
+              : "▶ "
+            : "";
 
         if (item.disabled) {
           const disabledLabel =
             typeof item.disabled === "string" ? item.disabled : "(disabled)";
           const disabledCursor = isActive ? theme.icon.cursor : "-";
           return theme.style.disabled(
-            `${disabledCursor} ${item.name} ${disabledLabel}`,
+            `${indent}${disabledCursor} ${expandIndicator}${item.name} ${disabledLabel}`,
           );
         }
 
         const color = isActive ? theme.style.highlight : (x: string) => x;
-        return color(`${cursor} ${item.name}`);
+        return color(`${indent}${cursor} ${expandIndicator}${item.name}`);
       },
       pageSize,
       loop,
@@ -231,9 +299,10 @@ export default createPrompt(
         .join(" ");
     }
 
+    const loadingIndicator = loading ? styleText("dim", " (loading...)") : "";
     const { description } = selectedChoice;
     const lines = [
-      [prefix, message].filter(Boolean).join(" "),
+      [prefix, message, loadingIndicator].filter(Boolean).join(" "),
       page,
       " ",
       description ? theme.style.description(description) : "",

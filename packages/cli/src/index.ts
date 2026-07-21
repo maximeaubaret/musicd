@@ -13,7 +13,6 @@ import {
 import { MusicDaemonClient } from "@musicd/client";
 
 import select from "./select-with-quit";
-import expandableSelect from "./expandable-select";
 import { createDaemonClient } from "./daemon-connection";
 import { runSetup } from "./setup";
 import { logger } from "./logger";
@@ -340,9 +339,10 @@ program
           id: item.id,
         }));
 
-        selectedItem = await expandableSelect({
+        selectedItem = await select({
           message: "Select a song to play (Tab to expand albums/artists):",
           choices,
+          pageSize: 15,
           onExpand: async (parentItem: SearchResult) => {
             // Fetch tracks for this album or artist using proper API endpoints
             if (parentItem.type === "MusicAlbum") {
@@ -707,208 +707,95 @@ program
     }
   });
 
+/** Render the queue and play the item selected by the user. */
+async function showQueue(): Promise<void> {
+  try {
+    const result = await getClient().getQueue();
+
+    if (isJsonMode()) {
+      outputJson(result);
+    }
+
+    if (result.count === 0) {
+      console.log(chalk.yellow("Queue is empty"));
+      return;
+    }
+
+    const choices = result.queue.map((item: QueueItem, index: number) => {
+      const parts = [
+        index === result.position ? chalk.green("▶") : " ",
+        chalk.gray(`${(index + 1).toString().padStart(2, " ")}.`),
+        chalk.bold.white(truncateTitle(item.name)),
+      ];
+
+      if (item.artist) {
+        parts.push(chalk.cyan(item.artist));
+      }
+      if (item.album) {
+        parts.push(chalk.blue(item.album));
+      }
+      if (item.duration > 0) {
+        parts.push(chalk.gray(formatDuration(item.duration)));
+      }
+      parts.push(sourceIndicator(item));
+
+      return { name: parts.join(" · "), value: index };
+    });
+
+    const selectedIndex = await select({
+      message: `Queue (${result.count} track${result.count === 1 ? "" : "s"}) - Select track to play:`,
+      choices,
+    });
+
+    if (selectedIndex === null) {
+      console.log(chalk.gray("Cancelled"));
+      return;
+    }
+
+    try {
+      const playResult = await getClient().playFromQueue(selectedIndex);
+      if (playResult.item) {
+        console.log(
+          chalk.green("▶ Playing:"),
+          chalk.bold(playResult.item.name),
+        );
+      }
+      console.log(
+        chalk.gray(
+          `  Queue: ${playResult.position + 1}/${playResult.queueLength}`,
+        ),
+      );
+    } catch (error) {
+      console.error(
+        chalk.red("✗ Failed to play:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  } catch (error) {
+    if (isJsonMode()) {
+      outputJsonError(error);
+    }
+    console.error(
+      chalk.red("✗ Queue error:"),
+      error instanceof Error ? error.message : error,
+    );
+    process.exit(1);
+  }
+}
+
 // Queue parent command with subcommands
 const queueCmd = program
   .command("queue")
   .alias("q")
   .description("Manage playback queue")
-  .action(async () => {
-    // Default action: show queue (same as 'queue show')
-    try {
-      const result = await getClient().getQueue();
-
-      if (isJsonMode()) {
-        outputJson(result);
-      }
-
-      if (result.count === 0) {
-        console.log(chalk.yellow("Queue is empty"));
-        return;
-      }
-
-      // Build choices for each queue item
-      const choices = result.queue.map((item: QueueItem, index: number) => {
-        const isCurrent = index === result.position;
-        const parts = [];
-
-        // Current track indicator
-        const prefix = isCurrent ? chalk.green("▶") : " ";
-        parts.push(prefix);
-
-        // Track number
-        parts.push(chalk.gray(`${(index + 1).toString().padStart(2, " ")}.`));
-
-        // Track name
-        parts.push(chalk.bold.white(truncateTitle(item.name)));
-
-        // Artist
-        if (item.artist) {
-          parts.push(chalk.cyan(item.artist));
-        }
-
-        // Album
-        if (item.album) {
-          parts.push(chalk.blue(item.album));
-        }
-
-        // Duration
-        if (item.duration > 0) {
-          parts.push(chalk.gray(formatDuration(item.duration)));
-        }
-
-        // Source indicator
-        parts.push(sourceIndicator(item));
-
-        return {
-          name: parts.join(" · "),
-          value: index,
-        };
-      });
-
-      const selectedIndex = await select({
-        message: `Queue (${result.count} track${result.count === 1 ? "" : "s"}) - Select track to play:`,
-        choices,
-      });
-
-      // User quit with 'q'
-      if (selectedIndex === null) {
-        console.log(chalk.gray("Cancelled"));
-        return;
-      }
-
-      // Play from the selected queue position
-      try {
-        const playResult = await getClient().playFromQueue(selectedIndex);
-        if (playResult.item) {
-          console.log(
-            chalk.green("▶ Playing:"),
-            chalk.bold(playResult.item.name),
-          );
-        }
-        console.log(
-          chalk.gray(
-            `  Queue: ${playResult.position + 1}/${playResult.queueLength}`,
-          ),
-        );
-      } catch (error) {
-        console.error(
-          chalk.red("✗ Failed to play:"),
-          error instanceof Error ? error.message : error,
-        );
-        process.exit(1);
-      }
-    } catch (error) {
-      if (isJsonMode()) {
-        outputJsonError(error);
-      }
-      console.error(
-        chalk.red("✗ Queue error:"),
-        error instanceof Error ? error.message : error,
-      );
-      process.exit(1);
-    }
-  });
+  .action(showQueue);
 
 queueCmd
   .command("show")
   .alias("ls")
   .description("Show queue")
-  .action(async () => {
-    // Same implementation as default queue action
-    try {
-      const result = await getClient().getQueue();
-
-      if (isJsonMode()) {
-        outputJson(result);
-      }
-
-      if (result.count === 0) {
-        console.log(chalk.yellow("Queue is empty"));
-        return;
-      }
-
-      // Build choices for each queue item
-      const choices = result.queue.map((item: QueueItem, index: number) => {
-        const isCurrent = index === result.position;
-        const parts = [];
-
-        // Current track indicator
-        const prefix = isCurrent ? chalk.green("▶") : " ";
-        parts.push(prefix);
-
-        // Track number
-        parts.push(chalk.gray(`${(index + 1).toString().padStart(2, " ")}.`));
-
-        // Track name
-        parts.push(chalk.bold.white(truncateTitle(item.name)));
-
-        // Artist
-        if (item.artist) {
-          parts.push(chalk.cyan(item.artist));
-        }
-
-        // Album
-        if (item.album) {
-          parts.push(chalk.blue(item.album));
-        }
-
-        // Duration
-        if (item.duration > 0) {
-          parts.push(chalk.gray(formatDuration(item.duration)));
-        }
-
-        // Source indicator
-        parts.push(sourceIndicator(item));
-
-        return {
-          name: parts.join(" · "),
-          value: index,
-        };
-      });
-
-      const selectedIndex = await select({
-        message: `Queue (${result.count} track${result.count === 1 ? "" : "s"}) - Select track to play:`,
-        choices,
-      });
-
-      // User quit with 'q'
-      if (selectedIndex === null) {
-        console.log(chalk.gray("Cancelled"));
-        return;
-      }
-
-      // Play from the selected queue position
-      try {
-        const playResult = await getClient().playFromQueue(selectedIndex);
-        if (playResult.item) {
-          console.log(
-            chalk.green("▶ Playing:"),
-            chalk.bold(playResult.item.name),
-          );
-        }
-        console.log(
-          chalk.gray(
-            `  Queue: ${playResult.position + 1}/${playResult.queueLength}`,
-          ),
-        );
-      } catch (error) {
-        console.error(
-          chalk.red("✗ Failed to play:"),
-          error instanceof Error ? error.message : error,
-        );
-        process.exit(1);
-      }
-    } catch (error) {
-      if (isJsonMode()) {
-        outputJsonError(error);
-      }
-      console.error(
-        chalk.red("✗ Queue error:"),
-        error instanceof Error ? error.message : error,
-      );
-      process.exit(1);
-    }
-  });
+  .action(showQueue);
 
 queueCmd
   .command("clear")
@@ -1177,10 +1064,11 @@ queueCmd
           id: item.id,
         }));
 
-        selectedItem = await expandableSelect({
+        selectedItem = await select({
           message:
             "Select item to add to queue (Tab to expand albums/artists):",
           choices,
+          pageSize: 15,
           onExpand: async (parentItem: SearchResult) => {
             // Fetch tracks for this album or artist using proper API endpoints
             if (parentItem.type === "MusicAlbum") {

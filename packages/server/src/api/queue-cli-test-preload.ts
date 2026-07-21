@@ -4,11 +4,16 @@ import { createApp } from "../app";
 import { MockBackend } from "../services/playback/mock-backend";
 import { PlayerService } from "../services/player";
 
-import type { JellyfinItem, PlaybackState, QueueMode } from "@musicd/shared";
+import type {
+  JellyfinItem,
+  PlaybackState,
+  QueueItem,
+  QueueMode,
+} from "@musicd/shared";
 import type { ApiJellyfinService, ApiYouTubeService } from "./routes";
 
 interface CliScenario {
-  initialItems: JellyfinItem[];
+  initialQueue: QueueItem[];
   initiallyPlaying: boolean;
   expectedState: PlaybackState;
   expectedCurrentItemId: string | null;
@@ -35,9 +40,21 @@ const selectedTrack: JellyfinItem = {
   RunTimeTicks: 1_800_000_000,
 };
 
+const [currentQueueItem] = createJellyfinQueueItems([currentTrack]);
+const youtubeQueueItem: QueueItem = {
+  id: "youtube-id",
+  name: "YouTube Track",
+  artist: "Video Artist",
+  duration: 240,
+  source: "youtube",
+  youtubeUrl: "https://www.youtube.com/watch?v=test-video",
+  videoId: "test-video",
+  uploader: "Video Artist",
+};
+
 const scenarios: Record<string, CliScenario> = {
   "stopped-empty-browse-queue": {
-    initialItems: [],
+    initialQueue: [],
     initiallyPlaying: false,
     expectedState: "stopped",
     expectedCurrentItemId: null,
@@ -45,7 +62,7 @@ const scenarios: Record<string, CliScenario> = {
     expectedQueuePosition: -1,
   },
   "stopped-existing-queue-add": {
-    initialItems: [currentTrack],
+    initialQueue: createJellyfinQueueItems([currentTrack]),
     initiallyPlaying: false,
     expectedState: "stopped",
     expectedCurrentItemId: null,
@@ -53,7 +70,7 @@ const scenarios: Record<string, CliScenario> = {
     expectedQueuePosition: -1,
   },
   "playing-existing-browse-queue": {
-    initialItems: [currentTrack],
+    initialQueue: createJellyfinQueueItems([currentTrack]),
     initiallyPlaying: true,
     expectedState: "playing",
     expectedCurrentItemId: "current-id",
@@ -61,7 +78,7 @@ const scenarios: Record<string, CliScenario> = {
     expectedQueuePosition: 0,
   },
   "playing-existing-browse-play": {
-    initialItems: [currentTrack],
+    initialQueue: createJellyfinQueueItems([currentTrack]),
     initiallyPlaying: true,
     expectedState: "playing",
     expectedCurrentItemId: "track-id",
@@ -69,13 +86,21 @@ const scenarios: Record<string, CliScenario> = {
     expectedQueuePosition: 0,
   },
   "loop-enabled-queue-add": {
-    initialItems: [currentTrack],
+    initialQueue: createJellyfinQueueItems([currentTrack]),
     initiallyPlaying: false,
     expectedState: "stopped",
     expectedCurrentItemId: null,
     expectedQueueIds: ["current-id", "track-id"],
     expectedQueuePosition: -1,
     initialQueueMode: { loop: true, random: false },
+  },
+  "queue-interaction": {
+    initialQueue: [currentQueueItem, youtubeQueueItem],
+    initiallyPlaying: true,
+    expectedState: "playing",
+    expectedCurrentItemId: "current-id",
+    expectedQueueIds: ["current-id", "youtube-id"],
+    expectedQueuePosition: 0,
   },
 };
 
@@ -120,7 +145,10 @@ const player = new PlayerService(new MockBackend());
 player.registerPlaybackSourceResolver("jellyfin", async (item) => ({
   url: `http://test.local/stream/${item.id}`,
 }));
-player.addItems(createJellyfinQueueItems(scenario.initialItems));
+player.registerPlaybackSourceResolver("youtube", async (item) => ({
+  url: `http://test.local/stream/${item.id}`,
+}));
+player.addItems(scenario.initialQueue);
 if (scenario.initialQueueMode) {
   player.setQueueMode(scenario.initialQueueMode);
 }
@@ -157,12 +185,21 @@ const mockFetch: typeof fetch = Object.assign(
       input instanceof Request
         ? new Request(input, init)
         : new Request(input.toString(), init);
+    const requestUrl = new URL(request.url);
+    if (
+      process.env.MUSICD_CLI_TEST_QUEUE_ERROR === "1" &&
+      request.method === "GET" &&
+      requestUrl.pathname.endsWith("/api/queue")
+    ) {
+      return Response.json(
+        { success: false, error: "Queue unavailable" },
+        { status: 503 },
+      );
+    }
+
     const response = await app.fetch(request);
 
-    if (
-      new URL(request.url).pathname.endsWith("/api/queue/add") &&
-      response.ok
-    ) {
+    if (requestUrl.pathname.endsWith("/api/queue/add") && response.ok) {
       const mismatch = await getScenarioMismatch();
       if (mismatch) {
         return Response.json({ error: mismatch }, { status: 500 });
