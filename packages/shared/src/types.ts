@@ -206,9 +206,49 @@ export class AuthenticationError extends Error {
   }
 }
 
+export type YouTubeErrorCode =
+  | "EXECUTABLE_NOT_FOUND"
+  | "INVALID_METADATA"
+  | "INVALID_STREAM_URL"
+  | "PROCESS_ERROR"
+  | "PROCESS_EXIT"
+  | "TERMINATION_FAILED"
+  | "TIMEOUT";
+
+export type YouTubeOperation = "availability" | "metadata" | "stream-url";
+
+export interface YouTubeErrorContext {
+  code: YouTubeErrorCode;
+  operation: YouTubeOperation;
+  exitCode?: number | null;
+  signal?: string | null;
+  stderr?: string;
+  executable?: string;
+  processCode?: string;
+  timeoutMs?: number;
+  cause?: Error;
+}
+
 export class YouTubeError extends Error {
-  constructor(message: string) {
-    super(message);
+  public readonly code: YouTubeErrorCode;
+  public readonly operation: YouTubeOperation;
+  public readonly exitCode?: number | null;
+  public readonly signal?: string | null;
+  public readonly stderr?: string;
+  public readonly executable?: string;
+  public readonly processCode?: string;
+  public readonly timeoutMs?: number;
+
+  constructor(message: string, context: YouTubeErrorContext) {
+    super(message, { cause: context.cause });
     this.name = "YouTubeError";
+    this.code = context.code;
+    this.operation = context.operation;
+    this.exitCode = context.exitCode;
+    this.signal = context.signal;
+    this.stderr = context.stderr;
+    this.executable = context.executable;
+    this.processCode = context.processCode;
+    this.timeoutMs = context.timeoutMs;
   }
 }
