@@ -210,6 +210,33 @@ describe("API authentication", () => {
       count: 0,
     });
   });
+
+  test("a configured daemon rejects setup for a different Jellyfin server", async () => {
+    const app = createApp({
+      jellyfinService,
+      youtubeService,
+      playerService,
+      startTime: 0,
+      jellyfinServerUrl: "https://current-jellyfin.example",
+    });
+
+    const response = await app.request("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        serverUrl: "https://other-jellyfin.example",
+        username: "listener",
+        password: "jellyfin-password",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      success: false,
+      error:
+        "This daemon is configured for a different Jellyfin server. Remove its setup state and restart it in setup mode to change servers.",
+    });
+  });
 });
 
 describe("POST /api/play validation", () => {

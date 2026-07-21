@@ -119,6 +119,30 @@ describe("MusicDaemonClient response validation", () => {
 });
 
 describe("MusicDaemonClient transport security", () => {
+  test("rejects remote HTTP setup credentials without the insecure override", async () => {
+    let requestSent = false;
+    const fetchMock = mock(async () => {
+      requestSent = true;
+      return Response.json({
+        success: true,
+        user: { id: "user-1", name: "listener" },
+      });
+    });
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://music.example.com:8765");
+
+    await expect(
+      client.authenticate(
+        "listener",
+        "jellyfin-password",
+        "https://jellyfin.example",
+      ),
+    ).rejects.toBeInstanceOf(Error);
+    expect(requestSent).toBe(false);
+  });
+
   test("debug logs keep request context without authentication secrets", async () => {
     const messages: string[] = [];
     const fetchMock = mock(async () =>
@@ -217,7 +241,7 @@ describe("MusicDaemonClient transport security", () => {
     );
 
     await expect(client.status()).rejects.toThrow(
-      "Refusing to send a daemon password over insecure HTTP",
+      "Refusing to send credentials over insecure HTTP",
     );
     expect(requestSent).toBe(false);
   });

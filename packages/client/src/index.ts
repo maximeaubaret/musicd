@@ -76,15 +76,15 @@ export interface ClientLogger {
 export interface ClientOptions {
   /** Optional logger for request debugging */
   logger?: ClientLogger;
-  /** Allow sending a daemon password over HTTP to a non-loopback host */
+  /** Allow sending credentials over HTTP to a non-loopback host */
   allowInsecureHttp?: boolean;
 }
 
-/** Error raised when a daemon password would be sent without transport security. */
+/** Error raised when credentials would be sent without transport security. */
 export class InsecureDaemonConnectionError extends Error {
   constructor() {
     super(
-      "Refusing to send a daemon password over insecure HTTP. Use HTTPS or explicitly allow insecure HTTP for a trusted network.",
+      "Refusing to send credentials over insecure HTTP. Use HTTPS or explicitly allow insecure HTTP for a trusted network.",
     );
     this.name = "InsecureDaemonConnectionError";
   }
@@ -174,6 +174,7 @@ export class MusicDaemonClient {
     responseSchema: ZodType<T>,
     method: "GET" | "POST" = "GET",
     body?: unknown,
+    containsCredentials: boolean = false,
   ): Promise<T> {
     const url = `${this.baseUrl}/api${endpoint}`;
     const requestTarget = `${method} /api${endpoint}`;
@@ -181,7 +182,7 @@ export class MusicDaemonClient {
     try {
       const daemonUrl = new URL(this.baseUrl);
       if (
-        this.password &&
+        (this.password || containsCredentials) &&
         daemonUrl.protocol === "http:" &&
         !isLoopbackHostname(daemonUrl.hostname) &&
         !this.allowInsecureHttp
@@ -288,11 +289,15 @@ export class MusicDaemonClient {
   async authenticate(
     username: string,
     password: string,
+    serverUrl?: string,
   ): Promise<AuthResponse> {
-    return this.request("/auth", AuthResponseSchema, "POST", {
-      username,
-      password,
-    });
+    return this.request(
+      "/auth",
+      AuthResponseSchema,
+      "POST",
+      serverUrl ? { serverUrl, username, password } : { username, password },
+      true,
+    );
   }
 
   /**

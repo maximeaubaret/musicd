@@ -207,6 +207,7 @@ export function createApiRoutes(
   daemonPassword?: string,
   ytDlpAvailable: boolean = false,
   clock: ApiClock = SYSTEM_CLOCK,
+  configuredJellyfinServerUrl?: string,
 ): Hono {
   const app = new Hono();
 
@@ -234,12 +235,28 @@ export function createApiRoutes(
   app.post("/auth", async (c) => {
     try {
       const body = await c.req.json();
-      const { username, password } = z
+      const { serverUrl, username, password } = z
         .object({
+          serverUrl: z.string().url().optional(),
           username: z.string().min(1),
           password: z.string().min(1),
         })
         .parse(body);
+
+      if (
+        serverUrl &&
+        configuredJellyfinServerUrl &&
+        serverUrl !== configuredJellyfinServerUrl
+      ) {
+        return c.json(
+          {
+            success: false,
+            error:
+              "This daemon is configured for a different Jellyfin server. Remove its setup state and restart it in setup mode to change servers.",
+          },
+          409,
+        );
+      }
 
       const result = await jellyfinService.authenticate(username, password);
 

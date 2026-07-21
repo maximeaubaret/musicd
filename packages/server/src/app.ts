@@ -16,6 +16,7 @@ export interface CreateAppOptions {
   clock?: ApiClock;
   startTime: number;
   daemonPassword?: string;
+  jellyfinServerUrl?: string;
   ytDlpAvailable?: boolean;
 }
 
@@ -35,6 +36,7 @@ export function createApp(options: CreateAppOptions): Hono {
       options.daemonPassword,
       options.ytDlpAvailable,
       options.clock,
+      options.jellyfinServerUrl,
     ),
   );
 

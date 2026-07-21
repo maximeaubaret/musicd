@@ -240,16 +240,20 @@ program
 program
   .command("setup")
   .description("Configure Jellyfin authentication")
-  .action(async () => {
+  .option("--jellyfin-url <url>", "Jellyfin server URL")
+  .action(async (options) => {
     const opts = program.opts();
-    await runSetup({
-      host: opts.host,
-      port: opts.port,
-      protocol: opts.protocol,
-      password: opts.password,
-      allowInsecureHttp: opts.allowInsecureHttp,
-      profile: opts.profile,
-    });
+    await runSetup(
+      {
+        host: opts.host,
+        port: opts.port,
+        protocol: opts.protocol,
+        password: opts.password,
+        allowInsecureHttp: opts.allowInsecureHttp,
+        profile: opts.profile,
+      },
+      options.jellyfinUrl,
+    );
   });
 
 program

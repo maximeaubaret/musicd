@@ -67,7 +67,13 @@ bun install
    ```bash
    ./musicd setup               # pre-built
    bun run cli setup            # from source
+   ./musicd setup --jellyfin-url https://jellyfin.example
    ```
+
+   On a clean install, the daemon starts a setup-only API on
+   `127.0.0.1:8765`. Setup prompts for the Jellyfin URL when it is not supplied.
+   After setup succeeds, restart the daemon to start the normal authenticated
+   playback API.
 
 3. **Play music:**
 
@@ -109,9 +115,9 @@ bun install
 
 ### Setup
 
-| Command | Alias | Description                |
-| ------- | ----- | -------------------------- |
-| `setup` | -     | Authenticate with Jellyfin |
+| Command                        | Alias | Description                         |
+| ------------------------------ | ----- | ----------------------------------- |
+| `setup [--jellyfin-url <url>]` | -     | Configure and authenticate Jellyfin |
 
 ### Global Options
 
@@ -125,6 +131,10 @@ bun install
 | `--password <password>` | Daemon password                                 |
 | `--allow-insecure-http` | Allow a password over HTTP on a trusted network |
 | `--print-logs`          | Enable debug logging                            |
+
+The setup command applies the same transport policy as other credential-bearing
+CLI requests: remote daemon connections require HTTPS unless
+`--allow-insecure-http` is explicitly selected for a trusted network.
 
 The `--json` flag makes all commands output structured JSON to stdout, suitable for
 scripting and piping. Interactive commands (browse, queue) output data instead of
@@ -144,7 +154,8 @@ Configuration is split into two files:
 
 ### Server Config (`~/.config/musicd/server.json`)
 
-Used by the daemon:
+Used by the daemon. A successful clean-install setup creates this file together
+with the validated Jellyfin authentication state:
 
 ```json
 {
