@@ -81,6 +81,68 @@ describe("CLI queue intent", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Playing: Test Track");
   });
+
+  test("queue add --loop leaves an already-enabled loop enabled", async () => {
+    const result = await runCli(
+      ["queue", "add", "--id", "track-id", "--loop"],
+      { MUSICD_CLI_TEST_SCENARIO: "loop-enabled-queue-add" },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Loop enabled");
+  });
+
+  test("queue add --loop completes every side effect before one JSON result", async () => {
+    const result = await runCli(
+      ["--json", "queue", "add", "--id", "track-id", "--loop"],
+      { MUSICD_CLI_TEST_SCENARIO: "loop-enabled-queue-add" },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      success: true,
+      tracksAdded: 1,
+      queueMode: { loop: true, random: false },
+    });
+  });
+
+  test("search-based queue add emits only its final JSON result", async () => {
+    const result = await runCli(["--json", "queue", "add", "track", "--loop"], {
+      MUSICD_CLI_TEST_SCENARIO: "stopped-empty-browse-queue",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      success: true,
+      tracksAdded: 1,
+      queueMode: { loop: true, random: false },
+    });
+  });
+
+  test("queue loop and random accept explicit states while retaining toggles", async () => {
+    const loopResult = await runCli(["--json", "queue", "loop", "on"], {
+      MUSICD_CLI_TEST_SCENARIO: "loop-enabled-queue-add",
+    });
+    const randomResult = await runCli(["--json", "queue", "random", "off"], {
+      MUSICD_CLI_TEST_SCENARIO: "loop-enabled-queue-add",
+    });
+    const toggleResult = await runCli(["--json", "queue", "loop"], {
+      MUSICD_CLI_TEST_SCENARIO: "loop-enabled-queue-add",
+    });
+
+    expect(JSON.parse(loopResult.stdout)).toMatchObject({
+      queueMode: { loop: true, random: false },
+    });
+    expect(JSON.parse(randomResult.stdout)).toMatchObject({
+      queueMode: { loop: true, random: false },
+    });
+    expect(JSON.parse(toggleResult.stdout)).toMatchObject({
+      queueMode: { loop: false, random: false },
+    });
+  });
 });
 
 describe("CLI integer input validation", () => {

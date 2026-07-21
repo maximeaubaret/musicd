@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Hono } from "hono";
+
 import {
   loadServerConfig,
   hasAuth,
@@ -8,13 +9,16 @@ import {
   saveQueueState,
   loadQueueState,
 } from "@musicd/shared";
-import type { ServerConfig } from "@musicd/shared";
+
 import { JellyfinService } from "./services/jellyfin";
 import { YouTubeService } from "./services/youtube";
 import { PlayerService } from "./services/player";
 import { FFPlayBackend } from "./services/playback";
 import { createApp } from "./app";
 import { logger } from "./logger";
+import { restorePersistedQueueState } from "./queue-state";
+
+import type { ServerConfig } from "@musicd/shared";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -149,16 +153,16 @@ async function main() {
   // Restore queue state if enabled
   if (shouldRestoreQueue) {
     try {
-      const savedState = loadQueueState();
-      if (savedState && savedState.queue.length > 0) {
-        playerService.restoreQueueState({
-          queue: savedState.queue,
-          position: savedState.queuePosition,
-          queueMode: savedState.queueMode,
-        });
-        console.log(`✓ Restored queue with ${savedState.queue.length} items`);
-        if (savedState.queuePosition >= 0) {
-          console.log(`  Position: Track ${savedState.queuePosition + 1}`);
+      const savedState = restorePersistedQueueState(
+        playerService,
+        loadQueueState,
+      );
+      if (savedState) {
+        if (savedState.queue.length > 0) {
+          console.log(`✓ Restored queue with ${savedState.queue.length} items`);
+          if (savedState.queuePosition >= 0) {
+            console.log(`  Position: Track ${savedState.queuePosition + 1}`);
+          }
         }
         const mode = savedState.queueMode;
         if (mode.loop || mode.random) {

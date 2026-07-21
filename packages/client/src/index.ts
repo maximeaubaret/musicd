@@ -14,6 +14,7 @@ import type {
   QueueOptions,
   PlaybackStatus,
   QueueModeResponse,
+  QueueModeStatusResponse,
   QueueMode,
 } from "./types";
 
@@ -33,6 +34,7 @@ export type {
   QueueOptions,
   PlaybackStatus,
   QueueModeResponse,
+  QueueModeStatusResponse,
   QueueMode,
 };
 
@@ -275,6 +277,20 @@ export class MusicDaemonClient {
   }
 
   /**
+   * Explicitly set one or more queue mode settings
+   */
+  async setQueueMode(mode: Partial<QueueMode>): Promise<QueueModeResponse> {
+    try {
+      return await this.request("/queue/mode", "POST", mode);
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Failed to set queue mode: ${String(error)}`);
+    }
+  }
+
+  /**
    * Shuffle the queue order
    */
   async shuffleQueue(): Promise<QueueResponse> {
@@ -284,7 +300,7 @@ export class MusicDaemonClient {
   /**
    * Get current queue mode settings
    */
-  async getQueueMode(): Promise<{ success: boolean; queueMode: QueueMode }> {
+  async getQueueMode(): Promise<QueueModeStatusResponse> {
     return this.request("/queue/mode");
   }
 

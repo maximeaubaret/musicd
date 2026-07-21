@@ -45,6 +45,7 @@ const playerService = {
   playPrevious: failIfCalled,
   removeFromQueue: failIfCalled,
   resume: failIfCalled,
+  setQueueMode: failIfCalled,
   shuffleQueue: failIfCalled,
   stop: failIfCalled,
   toggleLoop: failIfCalled,
@@ -173,6 +174,7 @@ describe("API authentication", () => {
       ["POST", "/api/queue/loop"],
       ["POST", "/api/queue/random"],
       ["POST", "/api/queue/shuffle"],
+      ["POST", "/api/queue/mode"],
       ["GET", "/api/queue/mode"],
       ["GET", "/api/search?q=test"],
       ["GET", "/api/album/id"],
@@ -484,6 +486,71 @@ describe("POST /api/queue/add playback behavior", () => {
         }),
       ],
     });
+  });
+});
+
+describe("queue mode API", () => {
+  test("explicitly sets loop and random and returns the resulting mode", async () => {
+    const app = createQueueTestApp({ items: {} });
+
+    const setResponse = await app.request("/api/queue/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ loop: true, random: true }),
+    });
+    const getResponse = await app.request("/api/queue/mode");
+
+    expect(setResponse.status).toBe(200);
+    expect(await setResponse.json()).toEqual({
+      success: true,
+      message: "Queue mode updated",
+      queueMode: { loop: true, random: true },
+    });
+    expect(await getResponse.json()).toEqual({
+      success: true,
+      queueMode: { loop: true, random: true },
+    });
+  });
+
+  test("retains the existing loop and random toggle operations", async () => {
+    const app = createQueueTestApp({ items: {} });
+
+    const loopResponse = await app.request("/api/queue/loop", {
+      method: "POST",
+    });
+    const randomResponse = await app.request("/api/queue/random", {
+      method: "POST",
+    });
+
+    expect(await loopResponse.json()).toMatchObject({
+      success: true,
+      loop: true,
+      queueMode: { loop: true, random: false },
+    });
+    expect(await randomResponse.json()).toMatchObject({
+      success: true,
+      random: true,
+      queueMode: { loop: true, random: true },
+    });
+  });
+
+  test("rejects malformed and incorrectly typed mode requests", async () => {
+    const app = createQueueTestApp({ items: {} });
+
+    for (const body of [JSON.stringify({ loop: "true" }), "{"]) {
+      const response = await app.request("/api/queue/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: "Invalid request",
+        details: expect.any(Array),
+      });
+    }
   });
 });
 
