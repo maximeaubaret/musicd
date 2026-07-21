@@ -13,7 +13,7 @@ import { JellyfinService } from "./services/jellyfin";
 import { YouTubeService } from "./services/youtube";
 import { PlayerService } from "./services/player";
 import { FFPlayBackend } from "./services/playback";
-import { createApiRoutes } from "./api/routes";
+import { createApp } from "./app";
 import { logger } from "./logger";
 
 // Parse command line arguments
@@ -173,7 +173,6 @@ async function main() {
     }
   }
 
-  // Create Hono app
   const app = new Hono();
 
   // Add request logger middleware (only when --print-logs is enabled)
@@ -194,27 +193,17 @@ async function main() {
     });
   }
 
-  // Mount API routes
   app.route(
-    "/api",
-    createApiRoutes(
+    "/",
+    createApp({
       jellyfinService,
       youtubeService,
       playerService,
       startTime,
-      config.daemon.password,
+      daemonPassword: config.daemon.password,
       ytDlpAvailable,
-    ),
+    }),
   );
-
-  // Root endpoint
-  app.get("/", (c) => {
-    return c.json({
-      name: "Jellyfin Music Daemon",
-      version: "0.1.0",
-      status: "running",
-    });
-  });
 
   // Start server
   const server = Bun.serve({

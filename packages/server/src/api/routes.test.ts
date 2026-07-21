@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { Hono } from "hono";
 
 import { APP_VERSION } from "@musicd/shared";
 
-import { createApiRoutes } from "./routes";
+import { createApp } from "../app";
 
 import type {
   ApiClock,
@@ -54,21 +53,16 @@ const clock: ApiClock = {
   now: () => 125_000,
 };
 
-function createTestApp(player: ApiPlayerService = playerService): Hono {
-  const app = new Hono();
-  app.route(
-    "/api",
-    createApiRoutes(
-      jellyfinService,
-      youtubeService,
-      player,
-      1_000,
-      "secret",
-      false,
-      clock,
-    ),
-  );
-  return app;
+function createTestApp(player: ApiPlayerService = playerService) {
+  return createApp({
+    jellyfinService,
+    youtubeService,
+    playerService: player,
+    clock,
+    startTime: 1_000,
+    daemonPassword: "secret",
+    ytDlpAvailable: false,
+  });
 }
 
 describe("API authentication", () => {
@@ -89,6 +83,7 @@ describe("API authentication", () => {
   test("every non-health endpoint requires authentication", async () => {
     const app = createTestApp();
     const endpoints = [
+      ["GET", "/"],
       ["POST", "/api/auth"],
       ["POST", "/api/play"],
       ["POST", "/api/pause"],
@@ -102,6 +97,10 @@ describe("API authentication", () => {
       ["POST", "/api/queue/previous"],
       ["POST", "/api/queue/remove/0"],
       ["POST", "/api/queue/play/0"],
+      ["POST", "/api/queue/loop"],
+      ["POST", "/api/queue/random"],
+      ["POST", "/api/queue/shuffle"],
+      ["GET", "/api/queue/mode"],
       ["GET", "/api/search?q=test"],
       ["GET", "/api/album/id"],
       ["GET", "/api/artist/id"],
@@ -116,5 +115,25 @@ describe("API authentication", () => {
         error: "Authentication required. Missing Authorization header.",
       });
     }
+  });
+
+  test("authenticated requests use the injected services", async () => {
+    const app = createTestApp({
+      ...playerService,
+      getQueue: () => [],
+      getQueuePosition: () => -1,
+    });
+
+    const response = await app.request("/api/queue", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      queue: [],
+      position: -1,
+      count: 0,
+    });
   });
 });

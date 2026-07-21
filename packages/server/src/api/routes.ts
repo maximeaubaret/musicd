@@ -1,16 +1,20 @@
 import { Hono } from "hono";
-import type { Context, Next } from "hono";
 import { z } from "zod";
-import type { JellyfinService } from "../services/jellyfin";
-import { YouTubeService } from "../services/youtube";
-import type { PlayerService } from "../services/player";
+
+import type { Context, MiddlewareHandler, Next } from "hono";
+
 import {
   JellyfinError,
   PlayerError,
   YouTubeError,
   APP_VERSION,
 } from "@musicd/shared";
+
+import { YouTubeService } from "../services/youtube";
+
 import type { QueueItem } from "@musicd/shared";
+import type { JellyfinService } from "../services/jellyfin";
+import type { PlayerService } from "../services/player";
 
 const PlayRequestSchema = z.object({
   itemId: z.string().min(1, "Item ID is required"),
@@ -62,12 +66,21 @@ const SYSTEM_CLOCK: ApiClock = {
   now: () => Date.now(),
 };
 
+function createUnauthorizedResponse(
+  c: Context,
+  error: string,
+): Promise<Response> {
+  return Promise.resolve(c.json({ success: false, error }, 401));
+}
+
 /**
  * Authentication middleware for Bearer token validation
  * Validates the Authorization header against the configured daemon password
  */
-function createAuthMiddleware(requiredPassword?: string) {
-  return async (c: Context, next: Next) => {
+export function createAuthMiddleware(
+  requiredPassword?: string,
+): MiddlewareHandler {
+  return (c: Context, next: Next) => {
     // If no password is configured, skip authentication
     if (!requiredPassword) {
       return next();
@@ -76,25 +89,18 @@ function createAuthMiddleware(requiredPassword?: string) {
     const authHeader = c.req.header("Authorization");
 
     if (!authHeader) {
-      return c.json(
-        {
-          success: false,
-          error: "Authentication required. Missing Authorization header.",
-        },
-        401,
+      return createUnauthorizedResponse(
+        c,
+        "Authentication required. Missing Authorization header.",
       );
     }
 
     // Check Bearer token format
     const parts = authHeader.split(" ");
     if (parts.length !== 2 || parts[0] !== "Bearer") {
-      return c.json(
-        {
-          success: false,
-          error:
-            "Invalid Authorization header format. Expected: Bearer <password>",
-        },
-        401,
+      return createUnauthorizedResponse(
+        c,
+        "Invalid Authorization header format. Expected: Bearer <password>",
       );
     }
 
@@ -102,12 +108,9 @@ function createAuthMiddleware(requiredPassword?: string) {
 
     // Constant-time comparison to prevent timing attacks
     if (providedPassword !== requiredPassword) {
-      return c.json(
-        {
-          success: false,
-          error: "Invalid authentication credentials.",
-        },
-        401,
+      return createUnauthorizedResponse(
+        c,
+        "Invalid authentication credentials.",
       );
     }
 
