@@ -1,6 +1,10 @@
 import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
+
+import { createJellyfinQueueItems } from "@musicd/shared";
+
 import { PlayerService } from "./player";
 import { MockBackend } from "./playback/mock-backend";
+
 import type { JellyfinItem, YouTubeQueueItem } from "@musicd/shared";
 
 // Create mock JellyfinItem
@@ -20,6 +24,14 @@ function createMockQueue(count: number): JellyfinItem[] {
   return Array.from({ length: count }, (_, i) =>
     createMockItem(`item-${i}`, `Track ${i + 1}`),
   );
+}
+
+function addJellyfinItems(
+  player: PlayerService,
+  items: JellyfinItem[],
+  clearQueue: boolean = false,
+): number {
+  return player.addItems(createJellyfinQueueItems(items), clearQueue);
 }
 
 // Create a mock YouTube queue item
@@ -78,7 +90,7 @@ describe("PlayerService", () => {
   describe("Smart play() command", () => {
     test("starts at index 0 when stopped with queue at position -1", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.play();
 
@@ -91,7 +103,7 @@ describe("PlayerService", () => {
 
     test("starts at index 0 when stopped with queue at position 0", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 0 });
 
       await player.play();
@@ -102,7 +114,7 @@ describe("PlayerService", () => {
 
     test("loops to first track when stopped at last item", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 2 });
 
       await player.play();
@@ -113,7 +125,7 @@ describe("PlayerService", () => {
 
     test("loops to first track when position beyond queue length", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 5 });
 
       await player.play();
@@ -129,7 +141,7 @@ describe("PlayerService", () => {
   describe("playNext()", () => {
     test("stops when playing last track", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(2);
 
@@ -143,7 +155,7 @@ describe("PlayerService", () => {
 
     test("starts playing next track when stopped", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 0 });
 
       await player.playNext();
@@ -157,7 +169,7 @@ describe("PlayerService", () => {
 
     test("advances to next track when playing", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -169,7 +181,7 @@ describe("PlayerService", () => {
 
     test("handles single-item queue", async () => {
       const items = createMockQueue(1);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -181,7 +193,7 @@ describe("PlayerService", () => {
 
     test("does nothing when stopped at last position", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 2 });
 
       await player.playNext();
@@ -194,7 +206,7 @@ describe("PlayerService", () => {
   describe("playPrevious()", () => {
     test("restarts current track when at first position while playing", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -211,7 +223,7 @@ describe("PlayerService", () => {
 
     test("does nothing when at position 0 and stopped", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 0 });
 
       await player.playPrevious();
@@ -222,7 +234,7 @@ describe("PlayerService", () => {
 
     test("starts playing previous track when stopped", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 2 });
 
       await player.playPrevious();
@@ -236,7 +248,7 @@ describe("PlayerService", () => {
 
     test("goes to previous track when playing", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(2);
 
@@ -250,7 +262,7 @@ describe("PlayerService", () => {
   describe("pause()", () => {
     test("pauses when playing", async () => {
       const items = createMockQueue(1);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -266,7 +278,7 @@ describe("PlayerService", () => {
 
     test("does nothing when already paused", async () => {
       const items = createMockQueue(1);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -281,7 +293,7 @@ describe("PlayerService", () => {
   describe("resume()", () => {
     test("resumes when paused", async () => {
       const items = createMockQueue(1);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -294,7 +306,7 @@ describe("PlayerService", () => {
 
     test("does nothing when playing", async () => {
       const items = createMockQueue(1);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -309,7 +321,7 @@ describe("PlayerService", () => {
 
     test("starts playback from restored queue position when stopped with queue", async () => {
       const items = createMockQueue(5);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       // Simulate server restart: restore queue state at position 2
       player.restoreQueueState({ queue: player.getQueue(), position: 2 });
@@ -341,7 +353,7 @@ describe("PlayerService", () => {
   describe("stop()", () => {
     test("stops playback", async () => {
       const items = createMockQueue(1);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -354,7 +366,7 @@ describe("PlayerService", () => {
 
     test("preserves queue position", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(1);
 
@@ -372,7 +384,7 @@ describe("PlayerService", () => {
   describe("Queue management", () => {
     test("stops playback when queue cleared while playing", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       await player.playFromQueue(0);
 
       expect(player.isPlaying()).toBe(true);
@@ -388,14 +400,14 @@ describe("PlayerService", () => {
 
     test("continues playback when items added to queue", async () => {
       const items = createMockQueue(2);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
       const moreItems = createMockQueue(2).map((item, i) =>
         createMockItem(`new-${i}`, `New Track ${i + 1}`),
       );
-      player.addJellyfinItems(moreItems);
+      addJellyfinItems(player, moreItems);
 
       expect(player.isPlaying()).toBe(true);
       expect(player.getQueuePosition()).toBe(0);
@@ -404,7 +416,7 @@ describe("PlayerService", () => {
 
     test("stops when current track removed", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(1);
 
@@ -419,7 +431,7 @@ describe("PlayerService", () => {
 
     test("adjusts position when track before current removed", async () => {
       const items = createMockQueue(5);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(3);
 
@@ -432,7 +444,7 @@ describe("PlayerService", () => {
 
     test("maintains position when track after current removed", async () => {
       const items = createMockQueue(5);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(2);
 
@@ -449,7 +461,7 @@ describe("PlayerService", () => {
     // The real FFPlayBackend detects completion via process exit events.
     test("stops when last track finishes naturally", async () => {
       const items = createMockQueue(2);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(1);
 
@@ -463,7 +475,7 @@ describe("PlayerService", () => {
 
     test("advances to next track when mid-queue track finishes", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -481,7 +493,7 @@ describe("PlayerService", () => {
 
     test("does not advance when manually stopped", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -503,7 +515,7 @@ describe("PlayerService", () => {
 
     test("handles position beyond queue length", async () => {
       const items = createMockQueue(3);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
       player.restoreQueueState({ queue: player.getQueue(), position: 10 });
 
       await player.play();
@@ -513,7 +525,7 @@ describe("PlayerService", () => {
 
     test("handles rapid pause/resume sequences", async () => {
       const items = createMockQueue(1);
-      player.addJellyfinItems(items);
+      addJellyfinItems(player, items);
 
       await player.playFromQueue(0);
 
@@ -613,7 +625,7 @@ describe("PlayerService", () => {
 
     test("queue contains both sources", () => {
       const jellyfinItems = createMockQueue(2);
-      player.addJellyfinItems(jellyfinItems);
+      addJellyfinItems(player, jellyfinItems);
 
       const ytItem = createMockYouTubeItem("yt1", "YT Track");
       player.addItems([ytItem]);
@@ -627,7 +639,7 @@ describe("PlayerService", () => {
 
     test("advances from Jellyfin to YouTube track", async () => {
       const jellyfinItems = createMockQueue(1);
-      player.addJellyfinItems(jellyfinItems);
+      addJellyfinItems(player, jellyfinItems);
 
       const ytItem = createMockYouTubeItem("yt1", "YT Track");
       player.addItems([ytItem]);
@@ -647,7 +659,7 @@ describe("PlayerService", () => {
       player.addItems([ytItem]);
 
       const jellyfinItems = createMockQueue(1);
-      player.addJellyfinItems(jellyfinItems);
+      addJellyfinItems(player, jellyfinItems);
 
       await player.playFromQueue(0);
       expect(youtubeResolverMock).toHaveBeenCalledTimes(1);
@@ -663,7 +675,7 @@ describe("PlayerService", () => {
       player.addItems([ytItem]);
 
       const jellyfinItems = createMockQueue(1);
-      player.addJellyfinItems(jellyfinItems);
+      addJellyfinItems(player, jellyfinItems);
 
       // Play YouTube item first — no reporting
       await player.playFromQueue(0);
@@ -676,7 +688,7 @@ describe("PlayerService", () => {
 
     test("clearQueue works with mixed items", async () => {
       const jellyfinItems = createMockQueue(2);
-      player.addJellyfinItems(jellyfinItems);
+      addJellyfinItems(player, jellyfinItems);
 
       const ytItem = createMockYouTubeItem("yt1", "YT Track");
       player.addItems([ytItem]);
@@ -692,7 +704,7 @@ describe("PlayerService", () => {
 
     test("addItems with clearQueue replaces mixed queue", () => {
       const jellyfinItems = createMockQueue(2);
-      player.addJellyfinItems(jellyfinItems);
+      addJellyfinItems(player, jellyfinItems);
 
       const ytItem = createMockYouTubeItem("yt1", "YT Track");
       player.addItems([ytItem], true);

@@ -87,5 +87,8 @@ export {
 } from "./state-storage";
 export type { QueueState } from "./state-storage";
 
+// Queue items
+export { createJellyfinQueueItems } from "./queue-items";
+
 // Constants
 export * from "./constants";

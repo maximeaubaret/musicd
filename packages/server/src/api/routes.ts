@@ -8,13 +8,18 @@ import {
   PlayerError,
   YouTubeError,
   APP_VERSION,
+  createJellyfinQueueItems,
   QueueIndexStringSchema,
   SearchLimitStringSchema,
 } from "@musicd/shared";
 
 import { YouTubeService } from "../services/youtube";
 
-import type { QueueItem } from "@musicd/shared";
+import type {
+  JellyfinItem,
+  JellyfinQueueItem,
+  QueueItem,
+} from "@musicd/shared";
 import type { JellyfinService } from "../services/jellyfin";
 import type { PlayerService } from "../services/player";
 
@@ -44,7 +49,6 @@ export interface ApiYouTubeService {
 
 export interface ApiPlayerService {
   addItems: PlayerService["addItems"];
-  addJellyfinItems: PlayerService["addJellyfinItems"];
   clearQueue: PlayerService["clearQueue"];
   getQueue: PlayerService["getQueue"];
   getQueuePosition: PlayerService["getQueuePosition"];
@@ -67,6 +71,32 @@ export interface ApiClock {
 const SYSTEM_CLOCK: ApiClock = {
   now: () => Date.now(),
 };
+
+async function resolveJellyfinQueueItems(
+  jellyfinService: ApiJellyfinService,
+  item: JellyfinItem,
+): Promise<JellyfinQueueItem[]> {
+  try {
+    let playableItems: JellyfinItem[];
+
+    if (item.Type === "MusicAlbum") {
+      playableItems = await jellyfinService.getAlbumTracks(item.Id);
+    } else if (item.Type === "MusicArtist") {
+      playableItems = await jellyfinService.getArtistTracks(item.Id);
+    } else if (item.Type === "Audio") {
+      playableItems = [item];
+    } else {
+      playableItems = [];
+    }
+
+    return createJellyfinQueueItems(playableItems);
+  } catch (error) {
+    if (error instanceof JellyfinError) {
+      throw error;
+    }
+    throw new JellyfinError(`Error resolving queue items: ${error}`);
+  }
+}
 
 function createUnauthorizedResponse(
   c: Context,
@@ -261,9 +291,17 @@ export function createApiRoutes(
 
       // Jellyfin item: get metadata, add to queue, and play
       const item = await jellyfinService.getItem(itemId);
+      const queueItems = await resolveJellyfinQueueItems(jellyfinService, item);
 
-      playerService.addJellyfinItems([item], true);
-      await playerService.playFromQueue(0);
+      if (queueItems.length === 0) {
+        return c.json(
+          { success: false, error: "No playable tracks found" },
+          400,
+        );
+      }
+
+      const firstAddedPosition = playerService.addItems(queueItems, true);
+      await playerService.playFromQueue(firstAddedPosition);
 
       return c.json({
         success: true,
@@ -502,48 +540,11 @@ export function createApiRoutes(
         } else {
           // Jellyfin ID: fetch item and expand albums/artists
           const item = await jellyfinService.getItem(id);
-
-          if (item.Type === "MusicAlbum") {
-            const tracks = await jellyfinService.getAlbumTracks(item.Id);
-            for (const track of tracks) {
-              allQueueItems.push({
-                id: track.Id,
-                name: track.Name,
-                artist: track.Artists?.[0],
-                album: track.Album,
-                duration: track.RunTimeTicks
-                  ? track.RunTimeTicks / 10000000
-                  : 0,
-                source: "jellyfin",
-                jellyfinItem: track,
-              });
-            }
-          } else if (item.Type === "MusicArtist") {
-            const tracks = await jellyfinService.getArtistTracks(item.Id);
-            for (const track of tracks) {
-              allQueueItems.push({
-                id: track.Id,
-                name: track.Name,
-                artist: track.Artists?.[0],
-                album: track.Album,
-                duration: track.RunTimeTicks
-                  ? track.RunTimeTicks / 10000000
-                  : 0,
-                source: "jellyfin",
-                jellyfinItem: track,
-              });
-            }
-          } else if (item.Type === "Audio") {
-            allQueueItems.push({
-              id: item.Id,
-              name: item.Name,
-              artist: item.Artists?.[0],
-              album: item.Album,
-              duration: item.RunTimeTicks ? item.RunTimeTicks / 10000000 : 0,
-              source: "jellyfin",
-              jellyfinItem: item,
-            });
-          }
+          const queueItems = await resolveJellyfinQueueItems(
+            jellyfinService,
+            item,
+          );
+          allQueueItems.push(...queueItems);
         }
       }
 
@@ -558,11 +559,14 @@ export function createApiRoutes(
       }
 
       // Add to queue
-      playerService.addItems(allQueueItems, clearQueue);
+      const firstAddedPosition = playerService.addItems(
+        allQueueItems,
+        clearQueue,
+      );
 
-      // Play now if requested, OR if nothing is currently playing
-      if (playNow || !playerService.isPlaying()) {
-        await playerService.playFromQueue(0);
+      // Only explicit immediate-play requests may start or replace playback.
+      if (playNow) {
+        await playerService.playFromQueue(firstAddedPosition);
       }
 
       return c.json({
