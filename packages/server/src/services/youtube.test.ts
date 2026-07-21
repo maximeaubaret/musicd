@@ -1,10 +1,37 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { spawn, type ChildProcess } from "child_process";
+import { spawn } from "child_process";
 
-import { YouTubeService } from "./youtube";
+import type { ChildProcess } from "child_process";
+
 import { logger } from "../logger";
+import { YouTubeService } from "./youtube";
 
 const originalConsoleLog = console.log;
+
+interface ScriptServiceOptions {
+  timeoutMs?: number;
+  terminationGraceMs?: number;
+  onSpawn?: (childProcess: ChildProcess) => void;
+}
+
+function createScriptService(
+  script: string,
+  options: ScriptServiceOptions = {},
+): YouTubeService {
+  return new YouTubeService({
+    spawnProcess: (_command, _args, spawnOptions) => {
+      const childProcess = spawn(
+        process.execPath,
+        ["-e", script],
+        spawnOptions,
+      );
+      options.onSpawn?.(childProcess);
+      return childProcess;
+    },
+    timeoutMs: options.timeoutMs ?? 1_000,
+    terminationGraceMs: options.terminationGraceMs,
+  });
+}
 
 afterEach(() => {
   logger.disable();
@@ -13,24 +40,13 @@ afterEach(() => {
 
 describe("YouTubeService", () => {
   test("creates a queue item from validated yt-dlp metadata", async () => {
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) =>
-        spawn(
-          process.execPath,
-          [
-            "-e",
-            `console.log(JSON.stringify({
+    const service = createScriptService(`console.log(JSON.stringify({
               id: "video-123",
               title: "A Song",
               uploader: "An Artist",
               duration: 123,
               webpage_url: "https://www.youtube.com/watch?v=video-123"
-            }))`,
-          ],
-          options,
-        ),
-      timeoutMs: 1_000,
-    });
+            }))`);
 
     await expect(
       service.createQueueItem(
@@ -50,11 +66,7 @@ describe("YouTubeService", () => {
   });
 
   test("reports malformed metadata JSON as a typed YouTube error", async () => {
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) =>
-        spawn(process.execPath, ["-e", `console.log("not-json")`], options),
-      timeoutMs: 1_000,
-    });
+    const service = createScriptService(`console.log("not-json")`);
 
     await expect(
       service.getVideoInfo("https://www.youtube.com/watch?v=video-123"),
@@ -68,15 +80,9 @@ describe("YouTubeService", () => {
   });
 
   test("reports missing required metadata fields before creating an item", async () => {
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) =>
-        spawn(
-          process.execPath,
-          ["-e", `console.log(JSON.stringify({ id: "video-123" }))`],
-          options,
-        ),
-      timeoutMs: 1_000,
-    });
+    const service = createScriptService(
+      `console.log(JSON.stringify({ id: "video-123" }))`,
+    );
 
     await expect(
       service.createQueueItem(
@@ -91,18 +97,9 @@ describe("YouTubeService", () => {
   });
 
   test("retains sanitized context for a non-zero yt-dlp exit", async () => {
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) =>
-        spawn(
-          process.execPath,
-          [
-            "-e",
-            `console.error("failed for https://media.example/audio?token=secret&sig=private"); process.exit(7)`,
-          ],
-          options,
-        ),
-      timeoutMs: 1_000,
-    });
+    const service = createScriptService(
+      `console.error("failed for HTTPS://media.example/audio?token=secret&sig=private"); process.exit(7)`,
+    );
 
     await expect(
       service.getVideoInfo("https://www.youtube.com/watch?v=video-123"),
@@ -112,9 +109,9 @@ describe("YouTubeService", () => {
       operation: "metadata",
       exitCode: 7,
       signal: null,
-      stderr: "failed for https://media.example/audio?[redacted]",
+      stderr: "failed for HTTPS://media.example/audio?[redacted]",
       message:
-        "yt-dlp failed with exit code 7: failed for https://media.example/audio?[redacted]",
+        "yt-dlp failed with exit code 7: failed for HTTPS://media.example/audio?[redacted]",
     });
   });
 
@@ -137,15 +134,9 @@ describe("YouTubeService", () => {
   });
 
   test("rejects malformed stream URL output without echoing it", async () => {
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) =>
-        spawn(
-          process.execPath,
-          ["-e", `console.log("not-a-url?token=secret")`],
-          options,
-        ),
-      timeoutMs: 1_000,
-    });
+    const service = createScriptService(
+      `console.log("not-a-url?token=secret")`,
+    );
 
     await expect(
       service.getStreamUrl("https://www.youtube.com/watch?v=video-123"),
@@ -185,16 +176,11 @@ describe("YouTubeService", () => {
 
   test("times out only after the yt-dlp child has terminated", async () => {
     let child: ChildProcess | undefined;
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) => {
-        child = spawn(
-          process.execPath,
-          ["-e", `setInterval(() => {}, 1_000)`],
-          options,
-        );
-        return child;
-      },
+    const service = createScriptService(`setInterval(() => {}, 1_000)`, {
       timeoutMs: 50,
+      onSpawn: (childProcess) => {
+        child = childProcess;
+      },
     });
 
     await expect(
@@ -211,21 +197,16 @@ describe("YouTubeService", () => {
 
   test("escalates termination when the yt-dlp child ignores SIGTERM", async () => {
     let child: ChildProcess | undefined;
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) => {
-        child = spawn(
-          process.execPath,
-          [
-            "-e",
-            `process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000)`,
-          ],
-          options,
-        );
-        return child;
+    const service = createScriptService(
+      `process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000)`,
+      {
+        timeoutMs: 50,
+        terminationGraceMs: 50,
+        onSpawn: (childProcess) => {
+          child = childProcess;
+        },
       },
-      timeoutMs: 50,
-      terminationGraceMs: 50,
-    });
+    );
 
     await expect(
       service.getVideoInfo("https://www.youtube.com/watch?v=video-123"),
@@ -244,18 +225,9 @@ describe("YouTubeService", () => {
       lines.push(args.map(String).join(" "));
     });
     logger.enable();
-    const service = new YouTubeService({
-      spawnProcess: (_command, _args, options) =>
-        spawn(
-          process.execPath,
-          [
-            "-e",
-            `console.log(JSON.stringify({ id: "video-123", title: "A Song" }))`,
-          ],
-          options,
-        ),
-      timeoutMs: 1_000,
-    });
+    const service = createScriptService(
+      `console.log(JSON.stringify({ id: "video-123", title: "A Song" }))`,
+    );
 
     await service.getVideoInfo(
       "https://www.youtube.com/watch?v=video-123&token=secret",

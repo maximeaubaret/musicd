@@ -1,10 +1,13 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "child_process";
+import { spawn } from "child_process";
 import { z } from "zod";
 
+import type { ChildProcess, SpawnOptions } from "child_process";
+
 import { YouTubeError, isYouTubeUrl } from "@musicd/shared";
-import type { YouTubeOperation, YouTubeQueueItem } from "@musicd/shared";
 
 import { logger } from "../logger";
+
+import type { YouTubeOperation, YouTubeQueueItem } from "@musicd/shared";
 
 const YtDlpMetadataSchema = z.object({
   id: z.string().min(1),
@@ -29,7 +32,7 @@ const StreamUrlSchema = z
   });
 
 function redactUrlQueryData(value: string): string {
-  return value.replace(/(https?:\/\/[^\s?#]+)\?[^\s#]*/g, "$1?[redacted]");
+  return value.replace(/(https?:\/\/[^\s?#]+)\?[^\s#]*/gi, "$1?[redacted]");
 }
 
 function getErrorCode(error: Error): string | undefined {
@@ -37,6 +40,10 @@ function getErrorCode(error: Error): string | undefined {
     return error.code;
   }
   return undefined;
+}
+
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
 interface YouTubeServiceDependencies {
@@ -222,8 +229,7 @@ export class YouTubeService {
           stdio: ["ignore", "pipe", "pipe"],
         });
       } catch (error) {
-        const cause = error instanceof Error ? error : new Error(String(error));
-        reject(this.createProcessError(cause, operation));
+        reject(this.createProcessError(toError(error), operation));
         return;
       }
       let stdout = "";
@@ -254,6 +260,18 @@ export class YouTubeService {
         reject(error);
       };
 
+      const createTimeoutError = (
+        exitCode: number | null,
+        signal: NodeJS.Signals | null,
+      ): YouTubeError =>
+        new YouTubeError(`yt-dlp timed out after ${this.timeoutMs}ms`, {
+          code: "TIMEOUT",
+          operation,
+          timeoutMs: this.timeoutMs,
+          exitCode,
+          signal,
+        });
+
       const terminate = (): void => {
         if (terminating) {
           return;
@@ -263,6 +281,10 @@ export class YouTubeService {
         escalationTimer = setTimeout(() => {
           const escalationCause = this.signalProcessTree(proc, "SIGKILL");
           terminationTimer = setTimeout(() => {
+            if (proc.exitCode !== null || proc.signalCode !== null) {
+              rejectOnce(createTimeoutError(proc.exitCode, proc.signalCode));
+              return;
+            }
             rejectOnce(
               new YouTubeError("yt-dlp did not terminate after SIGKILL", {
                 code: "TERMINATION_FAILED",
@@ -288,6 +310,14 @@ export class YouTubeService {
         stderr += data.toString();
       });
 
+      proc.on("exit", (code, signal) => {
+        if (!timedOut || settled) {
+          return;
+        }
+        // Unlike "close", "exit" cannot be held open by inherited stdio pipes.
+        rejectOnce(createTimeoutError(code, signal));
+      });
+
       proc.on("close", (code, signal) => {
         if (settled) {
           return;
@@ -295,15 +325,7 @@ export class YouTubeService {
         settled = true;
         clearTimers();
         if (timedOut) {
-          reject(
-            new YouTubeError(`yt-dlp timed out after ${this.timeoutMs}ms`, {
-              code: "TIMEOUT",
-              operation,
-              timeoutMs: this.timeoutMs,
-              exitCode: code,
-              signal,
-            }),
-          );
+          reject(createTimeoutError(code, signal));
           return;
         }
         if (processError) {
@@ -360,7 +382,7 @@ export class YouTubeService {
       }
       return undefined;
     } catch (error) {
-      const cause = error instanceof Error ? error : new Error(String(error));
+      const cause = toError(error);
       return getErrorCode(cause) === "ESRCH" ? undefined : cause;
     }
   }
