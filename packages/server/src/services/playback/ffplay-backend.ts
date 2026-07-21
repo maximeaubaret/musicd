@@ -4,6 +4,23 @@ import { PlaybackError } from "./backend";
 import { logger } from "../../logger";
 
 /**
+ * Convert an ffplay process exit code into a playback error.
+ * A zero exit code is the only natural completion signal.
+ */
+export function getFFPlayExitError(
+  exitCode: number | null,
+): PlaybackError | null {
+  if (exitCode === 0) {
+    return null;
+  }
+  return new PlaybackError(
+    exitCode === null
+      ? "ffplay exited without an exit code"
+      : `ffplay exited with code ${exitCode}`,
+  );
+}
+
+/**
  * FFPlay backend implementation
  * Uses ffplay (from ffmpeg) for audio playback
  */
@@ -15,8 +32,11 @@ export class FFPlayBackend implements PlaybackBackend {
   private pausedAt: number = 0;
   private isPaused_: boolean = false;
   private manuallyStopped: boolean = false;
-  private onCompleteCallback?: () => void;
-  private onErrorCallback?: (error: Error) => void;
+  private onCompleteCallback?: (position: number) => void | Promise<void>;
+  private onErrorCallback?: (
+    error: Error,
+    position: number,
+  ) => void | Promise<void>;
 
   constructor(audioDevice: string = "default", debug: boolean = false) {
     this.audioDevice = audioDevice;
@@ -94,20 +114,52 @@ export class FFPlayBackend implements PlaybackBackend {
 
       // Handle process events
       const childProcess = this.process;
+      let terminalEventEmitted = false;
+      const claimTerminalEvent = (): boolean => {
+        if (terminalEventEmitted) {
+          return false;
+        }
+        terminalEventEmitted = true;
+        return true;
+      };
       childProcess.on("error", (error) => {
+        if (!claimTerminalEvent()) {
+          return;
+        }
         logger.error("[ffplay] process error:", error);
+        const position = this.getPosition();
         this.cleanup();
-        if (this.onErrorCallback) {
-          this.onErrorCallback(error);
+        const errorCallback = this.onErrorCallback;
+        if (errorCallback) {
+          void this.invokeTerminalCallback(
+            () => errorCallback(error, position),
+            "error",
+          );
         }
       });
 
       childProcess.on("exit", (code) => {
+        if (!claimTerminalEvent()) {
+          return;
+        }
         logger.debug(`[ffplay] exited with code ${code}`);
+        const position = this.getPosition();
+        const exitError = getFFPlayExitError(code);
 
-        // Only call onComplete if process exited naturally (not stopped manually)
-        if (!this.manuallyStopped && this.onCompleteCallback) {
-          this.onCompleteCallback();
+        if (!this.manuallyStopped) {
+          const errorCallback = this.onErrorCallback;
+          const completeCallback = this.onCompleteCallback;
+          if (exitError && errorCallback) {
+            void this.invokeTerminalCallback(
+              () => errorCallback(exitError, position),
+              "error",
+            );
+          } else if (!exitError && completeCallback) {
+            void this.invokeTerminalCallback(
+              () => completeCallback(position),
+              "completion",
+            );
+          }
         }
 
         this.cleanup();
@@ -202,7 +254,7 @@ export class FFPlayBackend implements PlaybackBackend {
   }
 
   getPosition(): number {
-    if (!this.isPlaying()) {
+    if (!this.process) {
       return 0;
     }
     return this.isPaused_
@@ -210,12 +262,25 @@ export class FFPlayBackend implements PlaybackBackend {
       : (Date.now() - this.startTime) / 1000;
   }
 
-  onComplete(callback: () => void): void {
+  onComplete(callback: (position: number) => void | Promise<void>): void {
     this.onCompleteCallback = callback;
   }
 
-  onError(callback: (error: Error) => void): void {
+  onError(
+    callback: (error: Error, position: number) => void | Promise<void>,
+  ): void {
     this.onErrorCallback = callback;
+  }
+
+  private async invokeTerminalCallback(
+    callback: () => void | Promise<void>,
+    eventName: "completion" | "error",
+  ): Promise<void> {
+    try {
+      await callback();
+    } catch (error) {
+      logger.error(`[ffplay] ${eventName} callback failed:`, error);
+    }
   }
 
   private cleanup(): void {

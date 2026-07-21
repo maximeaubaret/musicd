@@ -46,13 +46,17 @@ export interface PlaybackBackend {
   /**
    * Register callback for when track completes naturally
    * Not called when stopped manually
+   * @param callback Receives the final playback position in seconds
    */
-  onComplete(callback: () => void): void;
+  onComplete(callback: (position: number) => void | Promise<void>): void;
 
   /**
    * Register callback for playback errors
+   * @param callback Receives the error and last playback position in seconds
    */
-  onError(callback: (error: Error) => void): void;
+  onError(
+    callback: (error: Error, position: number) => void | Promise<void>,
+  ): void;
 }
 
 /**

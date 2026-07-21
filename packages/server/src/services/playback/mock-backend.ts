@@ -8,8 +8,12 @@ export class MockBackend implements PlaybackBackend {
   private _isPlaying = false;
   private _isPaused = false;
   private _position = 0;
-  private onCompleteCallback?: () => void;
-  private onErrorCallback?: (error: Error) => void;
+  private terminalEventEmitted = false;
+  private onCompleteCallback?: (position: number) => void | Promise<void>;
+  private onErrorCallback?: (
+    error: Error,
+    position: number,
+  ) => void | Promise<void>;
 
   /**
    * Start playing (synchronous, no delays)
@@ -18,6 +22,7 @@ export class MockBackend implements PlaybackBackend {
     this._isPlaying = true;
     this._isPaused = false;
     this._position = 0;
+    this.terminalEventEmitted = false;
   }
 
   /**
@@ -45,6 +50,7 @@ export class MockBackend implements PlaybackBackend {
     this._isPlaying = false;
     this._isPaused = false;
     this._position = 0;
+    this.terminalEventEmitted = true;
   }
 
   /**
@@ -71,36 +77,40 @@ export class MockBackend implements PlaybackBackend {
   /**
    * Register completion callback
    */
-  onComplete(callback: () => void): void {
+  onComplete(callback: (position: number) => void | Promise<void>): void {
     this.onCompleteCallback = callback;
   }
 
   /**
    * Register error callback
    */
-  onError(callback: (error: Error) => void): void {
+  onError(
+    callback: (error: Error, position: number) => void | Promise<void>,
+  ): void {
     this.onErrorCallback = callback;
   }
 
   /**
    * Test helper: Simulate track completion
    */
-  simulateComplete(): void {
-    this._isPlaying = false;
-    this._isPaused = false;
+  async simulateComplete(): Promise<void> {
+    if (!this.claimTerminalEvent()) {
+      return;
+    }
     if (this.onCompleteCallback) {
-      this.onCompleteCallback();
+      await this.onCompleteCallback(this._position);
     }
   }
 
   /**
    * Test helper: Simulate playback error
    */
-  simulateError(error: Error): void {
-    this._isPlaying = false;
-    this._isPaused = false;
+  async simulateError(error: Error): Promise<void> {
+    if (!this.claimTerminalEvent()) {
+      return;
+    }
     if (this.onErrorCallback) {
-      this.onErrorCallback(error);
+      await this.onErrorCallback(error, this._position);
     }
   }
 
@@ -109,5 +119,15 @@ export class MockBackend implements PlaybackBackend {
    */
   setPosition(seconds: number): void {
     this._position = seconds;
+  }
+
+  private claimTerminalEvent(): boolean {
+    if (this.terminalEventEmitted) {
+      return false;
+    }
+    this.terminalEventEmitted = true;
+    this._isPlaying = false;
+    this._isPaused = false;
+    return true;
   }
 }
