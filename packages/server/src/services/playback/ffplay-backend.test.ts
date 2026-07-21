@@ -1,5 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
-import { FFPlayBackend } from "./ffplay-backend";
+
+import { PlaybackError } from "./backend";
+import { FFPlayBackend, getFFPlayExitError } from "./ffplay-backend";
 
 describe("FFPlayBackend", () => {
   let backend: FFPlayBackend;
@@ -56,6 +58,20 @@ describe("FFPlayBackend", () => {
       backend.onError(callback);
       // Callback is registered (no error thrown)
       expect(true).toBe(true);
+    });
+  });
+
+  describe("Process exit classification", () => {
+    test("treats only a zero exit code as natural completion", () => {
+      expect(getFFPlayExitError(0)).toBeNull();
+
+      const nonZeroExit = getFFPlayExitError(1);
+      expect(nonZeroExit).toBeInstanceOf(PlaybackError);
+      expect(nonZeroExit?.message).toBe("ffplay exited with code 1");
+
+      const signalExit = getFFPlayExitError(null);
+      expect(signalExit).toBeInstanceOf(PlaybackError);
+      expect(signalExit?.message).toBe("ffplay exited without an exit code");
     });
   });
 });

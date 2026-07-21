@@ -5,35 +5,53 @@ import type { PlaybackBackend } from "./playback/backend";
 
 export type StreamUrlResolver = (item: QueueItem) => Promise<string>;
 
+interface PlaybackReporter {
+  reportStart: (itemId: string, sessionId: string) => Promise<void>;
+  reportProgress: (
+    itemId: string,
+    sessionId: string,
+    ticks: number,
+    paused: boolean,
+  ) => Promise<void>;
+  reportStop: (
+    itemId: string,
+    sessionId: string,
+    ticks: number,
+  ) => Promise<void>;
+}
+
+interface PlaybackSession {
+  itemId: string;
+  sessionId: string;
+  reporter: PlaybackReporter;
+  startPromise: Promise<void>;
+}
+
 export class PlayerService {
   private currentItem: QueueItem | null = null;
   private queue: QueueItem[] = [];
   private queuePosition: number = -1; // -1 means no queue, 0+ is current position
   private streamUrlResolvers: Map<string, StreamUrlResolver> = new Map();
-  private playSessionId: string | null = null;
+  private playbackSession: PlaybackSession | null = null;
+  private playbackSessionSequence: number = 0;
+  private playbackGeneration: number = 0;
   private progressInterval: NodeJS.Timeout | null = null;
-  private playbackReporter: {
-    reportStart: (itemId: string, sessionId: string) => Promise<void>;
-    reportProgress: (
-      itemId: string,
-      sessionId: string,
-      ticks: number,
-      paused: boolean,
-    ) => Promise<void>;
-    reportStop: (
-      itemId: string,
-      sessionId: string,
-      ticks: number,
-    ) => Promise<void>;
-  } | null = null;
+  private playbackReporter: PlaybackReporter | null = null;
   private stateSaveEnabled: boolean = false;
   private queueMode: QueueMode = { loop: false, random: false };
   private stateSaveCallback: (() => void) | null = null;
 
   constructor(private backend: PlaybackBackend) {
     // Register for completion events
-    this.backend.onComplete(async () => {
-      this.cleanup();
+    this.backend.onComplete(async (position) => {
+      const completedGeneration = this.playbackGeneration;
+      const closeSessionPromise = this.closePlaybackSession(position);
+      this.cleanupPlaybackState();
+      await closeSessionPromise;
+
+      if (this.playbackGeneration !== completedGeneration) {
+        return;
+      }
 
       // Auto-advance to next track based on queue mode
       if (this.hasNext() || this.queueMode.loop || this.queueMode.random) {
@@ -46,9 +64,11 @@ export class PlayerService {
     });
 
     // Register for error events
-    this.backend.onError((error) => {
+    this.backend.onError(async (error, position) => {
       console.error("Playback error:", error);
-      this.cleanup();
+      const closeSessionPromise = this.closePlaybackSession(position);
+      this.cleanupPlaybackState();
+      await closeSessionPromise;
     });
   }
 
@@ -64,20 +84,7 @@ export class PlayerService {
    * Set the playback reporter for Jellyfin play tracking
    * This enables play count tracking and scrobbling
    */
-  setPlaybackReporter(reporter: {
-    reportStart: (itemId: string, sessionId: string) => Promise<void>;
-    reportProgress: (
-      itemId: string,
-      sessionId: string,
-      ticks: number,
-      paused: boolean,
-    ) => Promise<void>;
-    reportStop: (
-      itemId: string,
-      sessionId: string,
-      ticks: number,
-    ) => Promise<void>;
-  }): void {
+  setPlaybackReporter(reporter: PlaybackReporter): void {
     this.playbackReporter = reporter;
   }
 
@@ -141,29 +148,43 @@ export class PlayerService {
     try {
       // Set current item BEFORE playing (for position reporting)
       this.currentItem = item;
+      this.playbackGeneration++;
 
       // Play through backend (no ffplay details here!)
       await this.backend.play(url);
 
       // Report playback start to Jellyfin (only for Jellyfin items)
       if (this.playbackReporter && item.source === "jellyfin") {
+        const reporter = this.playbackReporter;
+        const sessionId = `session-${Date.now()}-${++this.playbackSessionSequence}`;
+        const startPromise = this.reportPlaybackStart(
+          reporter,
+          item.id,
+          sessionId,
+        );
+        const session: PlaybackSession = {
+          itemId: item.id,
+          sessionId,
+          reporter,
+          startPromise,
+        };
+        this.playbackSession = session;
+
         try {
-          this.playSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-          await this.playbackReporter.reportStart(item.id, this.playSessionId);
+          await startPromise;
 
           // Set up progress reporting every 10 seconds
+          if (this.playbackSession !== session) {
+            return;
+          }
           this.progressInterval = setInterval(async () => {
-            if (
-              this.currentItem &&
-              this.currentItem.source === "jellyfin" &&
-              this.playSessionId
-            ) {
+            if (this.playbackSession === session) {
               const position = this.backend.getPosition();
               const ticks = Math.floor(position * 10000000);
               try {
-                await this.playbackReporter!.reportProgress(
-                  this.currentItem.id,
-                  this.playSessionId,
+                await session.reporter.reportProgress(
+                  session.itemId,
+                  session.sessionId,
                   ticks,
                   this.backend.isPaused(),
                 );
@@ -173,11 +194,14 @@ export class PlayerService {
             }
           }, 10000);
         } catch (error) {
+          if (this.playbackSession === session) {
+            this.playbackSession = null;
+          }
           console.error("Failed to report playback start:", error);
         }
       }
     } catch (error) {
-      this.cleanup();
+      this.cleanupPlaybackState();
       throw new PlayerError(`Failed to play: ${error}`);
     }
   }
@@ -524,28 +548,11 @@ export class PlayerService {
       return;
     }
 
-    // Report playback stopped before cleanup (only for Jellyfin items)
-    if (
-      this.playbackReporter &&
-      this.currentItem &&
-      this.currentItem.source === "jellyfin" &&
-      this.playSessionId
-    ) {
-      try {
-        const position = this.backend.getPosition();
-        const ticks = Math.floor(position * 10000000);
-        await this.playbackReporter.reportStop(
-          this.currentItem.id,
-          this.playSessionId,
-          ticks,
-        );
-      } catch (error) {
-        console.error("Failed to report playback stopped:", error);
-      }
-    }
-
+    const position = this.backend.getPosition();
+    const closeSessionPromise = this.closePlaybackSession(position);
     await this.backend.stop();
-    this.cleanup();
+    this.cleanupPlaybackState();
+    await closeSessionPromise;
   }
 
   /**
@@ -593,36 +600,55 @@ export class PlayerService {
     return this.backend.isPlaying();
   }
 
-  /**
-   * Clean up resources
-   */
-  private cleanup(): void {
-    // Clear progress reporting interval
+  private clearProgressInterval(): void {
     if (this.progressInterval) {
       clearInterval(this.progressInterval);
       this.progressInterval = null;
     }
+  }
 
-    // Report playback stopped if we have an active session (only for Jellyfin items)
-    // This handles the case where the process exits naturally
-    if (
-      this.playbackReporter &&
-      this.currentItem &&
-      this.currentItem.source === "jellyfin" &&
-      this.playSessionId
-    ) {
-      const position = this.backend.getPosition();
-      const ticks = Math.floor(position * 10000000);
+  private async reportPlaybackStart(
+    reporter: PlaybackReporter,
+    itemId: string,
+    sessionId: string,
+  ): Promise<void> {
+    // Let the caller install the session before reporting can trigger callbacks.
+    await Promise.resolve();
+    await reporter.reportStart(itemId, sessionId);
+  }
 
-      // Fire and forget - don't wait for the report
-      this.playbackReporter
-        .reportStop(this.currentItem.id, this.playSessionId, ticks)
-        .catch((error) => {
-          console.error("Failed to report playback stopped in cleanup:", error);
-        });
+  private async closePlaybackSession(position: number): Promise<void> {
+    const session = this.playbackSession;
+    this.playbackSession = null;
+    this.clearProgressInterval();
+
+    if (!session) {
+      return;
     }
 
+    try {
+      await session.startPromise;
+    } catch {
+      return;
+    }
+
+    try {
+      const ticks = Math.floor(position * 10000000);
+      await session.reporter.reportStop(
+        session.itemId,
+        session.sessionId,
+        ticks,
+      );
+    } catch (error) {
+      console.error("Failed to report playback stopped:", error);
+    }
+  }
+
+  /**
+   * Clean up resources after the active session has been closed
+   */
+  private cleanupPlaybackState(): void {
+    this.clearProgressInterval();
     this.currentItem = null;
-    this.playSessionId = null;
   }
 }

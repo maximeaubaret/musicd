@@ -379,6 +379,22 @@ describe("PlayerService", () => {
       await player.stop();
       expect(player.isPlaying()).toBe(false);
     });
+
+    test("reports one stop for the active Jellyfin session", async () => {
+      addJellyfinItems(player, createMockQueue(1));
+      await player.playFromQueue(0);
+      backend.setPosition(42);
+
+      await player.stop();
+
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      expect(reportStopMock).toHaveBeenCalledWith(
+        "item-0",
+        expect.any(String),
+        420000000,
+      );
+      expect((await player.getStatus()).state).toBe("stopped");
+    });
   });
 
   describe("Queue management", () => {
@@ -590,7 +606,7 @@ describe("PlayerService", () => {
       expect(player.isPlaying()).toBe(true);
 
       // Simulate track ending
-      backend.simulateComplete();
+      await backend.simulateComplete();
 
       expect(player.isPlaying()).toBe(false);
     });
@@ -604,7 +620,7 @@ describe("PlayerService", () => {
       expect(player.getQueuePosition()).toBe(0);
 
       // Simulate track ending - should auto-advance
-      backend.simulateComplete();
+      await backend.simulateComplete();
 
       // Should have advanced to next track
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -625,6 +641,192 @@ describe("PlayerService", () => {
 
       expect(player.isPlaying()).toBe(false);
       expect(player.getQueuePosition()).toBe(positionBefore);
+    });
+  });
+
+  describe("Playback reporting lifecycle", () => {
+    function installPendingStopReport(): () => void {
+      let resolveStopReport: () => void = () => {
+        throw new Error("Stop report promise was not initialized");
+      };
+      const stopReportPromise = new Promise<void>((resolve) => {
+        resolveStopReport = resolve;
+      });
+      reportStopMock = mock(() => stopReportPromise);
+      player.setPlaybackReporter({
+        reportStart: reportStartMock,
+        reportProgress: reportProgressMock,
+        reportStop: reportStopMock,
+      });
+      return resolveStopReport;
+    }
+
+    test("track replacement closes the previous session without reusing its identifier", async () => {
+      addJellyfinItems(player, createMockQueue(2));
+      await player.playFromQueue(0);
+      backend.setPosition(12);
+
+      await player.playFromQueue(1);
+
+      expect(reportStartMock).toHaveBeenCalledTimes(2);
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      const firstSessionId = reportStartMock.mock.calls[0][1];
+      const secondSessionId = reportStartMock.mock.calls[1][1];
+      expect(firstSessionId).not.toBe(secondSessionId);
+      expect(reportStopMock).toHaveBeenCalledWith(
+        "item-0",
+        firstSessionId,
+        120000000,
+      );
+
+      backend.setPosition(24);
+      await player.stop();
+
+      expect(reportStopMock).toHaveBeenCalledTimes(2);
+      expect(reportStopMock).toHaveBeenLastCalledWith(
+        "item-1",
+        secondSessionId,
+        240000000,
+      );
+      expect((await player.getStatus()).state).toBe("stopped");
+    });
+
+    test("manual stop prevents auto-advance while its report is pending", async () => {
+      const resolveStopReport = installPendingStopReport();
+      addJellyfinItems(player, createMockQueue(2));
+      await player.playFromQueue(0);
+
+      const stopPromise = player.stop();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await backend.simulateComplete();
+      resolveStopReport();
+      await stopPromise;
+
+      expect(reportStartMock).toHaveBeenCalledTimes(1);
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      const status = await player.getStatus();
+      expect(status.state).toBe("stopped");
+      expect(status.currentItem).toBeNull();
+      expect(status.queuePosition).toBe(0);
+    });
+
+    test("pending manual stop cannot clear newly started playback", async () => {
+      const resolveStopReport = installPendingStopReport();
+      addJellyfinItems(player, createMockQueue(2));
+      await player.playFromQueue(0);
+
+      const stopPromise = player.stop();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await player.playFromQueue(1);
+      resolveStopReport();
+      await stopPromise;
+
+      expect(reportStartMock).toHaveBeenCalledTimes(2);
+      const status = await player.getStatus();
+      expect(status.state).toBe("playing");
+      expect(status.currentItem?.id).toBe("item-1");
+      expect(status.queuePosition).toBe(1);
+    });
+
+    test("queue clearing closes the active session once", async () => {
+      addJellyfinItems(player, createMockQueue(2));
+      await player.playFromQueue(0);
+      backend.setPosition(15);
+
+      player.clearQueue();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      expect(reportStopMock.mock.calls[0][2]).toBe(150000000);
+      const status = await player.getStatus();
+      expect(status.state).toBe("stopped");
+      expect(status.currentItem).toBeNull();
+      expect(status.queue).toEqual([]);
+      expect(status.queuePosition).toBe(-1);
+    });
+
+    test("natural completion reports the final position once", async () => {
+      addJellyfinItems(player, createMockQueue(1));
+      await player.playFromQueue(0);
+      backend.setPosition(180);
+
+      await backend.simulateComplete();
+
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      expect(reportStopMock.mock.calls[0][2]).toBe(1800000000);
+      const status = await player.getStatus();
+      expect(status.state).toBe("stopped");
+      expect(status.currentItem).toBeNull();
+    });
+
+    test("natural completion starts the next track with a new session", async () => {
+      addJellyfinItems(player, createMockQueue(2));
+      await player.playFromQueue(0);
+      backend.setPosition(180);
+
+      await backend.simulateComplete();
+
+      expect(reportStartMock).toHaveBeenCalledTimes(2);
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      const firstSessionId = reportStartMock.mock.calls[0][1];
+      const secondSessionId = reportStartMock.mock.calls[1][1];
+      expect(firstSessionId).not.toBe(secondSessionId);
+      expect(reportStopMock.mock.calls[0][1]).toBe(firstSessionId);
+      const status = await player.getStatus();
+      expect(status.state).toBe("playing");
+      expect(status.currentItem?.id).toBe("item-1");
+    });
+
+    test("stale natural completion cannot clear newly started playback", async () => {
+      const resolveStopReport = installPendingStopReport();
+      addJellyfinItems(player, createMockQueue(2));
+      await player.playFromQueue(0);
+
+      const completionPromise = backend.simulateComplete();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await player.playFromQueue(1);
+      resolveStopReport();
+      await completionPromise;
+
+      expect(reportStartMock).toHaveBeenCalledTimes(2);
+      const status = await player.getStatus();
+      expect(status.state).toBe("playing");
+      expect(status.currentItem?.id).toBe("item-1");
+      expect(status.queuePosition).toBe(1);
+    });
+
+    test("backend error closes the active session once", async () => {
+      addJellyfinItems(player, createMockQueue(1));
+      await player.playFromQueue(0);
+      backend.setPosition(31);
+
+      await backend.simulateError(new Error("decoder failed"));
+      await player.stop();
+
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      expect(reportStopMock.mock.calls[0][2]).toBe(310000000);
+      const status = await player.getStatus();
+      expect(status.state).toBe("stopped");
+      expect(status.currentItem).toBeNull();
+    });
+
+    test("stale backend error cannot clear newly started playback", async () => {
+      const resolveStopReport = installPendingStopReport();
+      addJellyfinItems(player, createMockQueue(2));
+      await player.playFromQueue(0);
+
+      const errorPromise = backend.simulateError(new Error("decoder failed"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await player.playFromQueue(1);
+      resolveStopReport();
+      await errorPromise;
+
+      expect(reportStartMock).toHaveBeenCalledTimes(2);
+      expect(reportStopMock).toHaveBeenCalledTimes(1);
+      const status = await player.getStatus();
+      expect(status.state).toBe("playing");
+      expect(status.currentItem?.id).toBe("item-1");
+      expect(status.queuePosition).toBe(1);
     });
   });
 
@@ -707,6 +909,20 @@ describe("PlayerService", () => {
       expect(player.isPlaying()).toBe(true);
       // Playback reporting is Jellyfin-only
       expect(reportStartMock).not.toHaveBeenCalled();
+    });
+
+    test("does not report stop when YouTube playback ends", async () => {
+      const ytItem = createMockYouTubeItem("abc123", "YouTube Song");
+      player.addItems([ytItem]);
+      await player.playFromQueue(0);
+      backend.setPosition(24);
+
+      await backend.simulateComplete();
+
+      expect(reportStartMock).not.toHaveBeenCalled();
+      expect(reportProgressMock).not.toHaveBeenCalled();
+      expect(reportStopMock).not.toHaveBeenCalled();
+      expect((await player.getStatus()).state).toBe("stopped");
     });
 
     test("throws when no resolver registered for source", async () => {
