@@ -25,6 +25,9 @@ export type {
   PlayOptions,
   PlayRequest,
   QueueAddRequest,
+  YouTubeErrorCode,
+  YouTubeOperation,
+  YouTubeErrorContext,
 } from "./types";
 export {
   JellyfinError,
