@@ -237,6 +237,10 @@ export class YouTubeService {
       let settled = false;
       let terminating = false;
       let timedOut = false;
+      let sigkillSent = false;
+      let processExit:
+        | { exitCode: number | null; signal: NodeJS.Signals | null }
+        | undefined;
       let processError: YouTubeError | undefined;
       let escalationTimer: ReturnType<typeof setTimeout> | undefined;
       let terminationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -279,7 +283,14 @@ export class YouTubeService {
         terminating = true;
         const terminationCause = this.signalProcessTree(proc, "SIGTERM");
         escalationTimer = setTimeout(() => {
+          sigkillSent = true;
           const escalationCause = this.signalProcessTree(proc, "SIGKILL");
+          if (processExit) {
+            rejectOnce(
+              createTimeoutError(processExit.exitCode, processExit.signal),
+            );
+            return;
+          }
           terminationTimer = setTimeout(() => {
             if (proc.exitCode !== null || proc.signalCode !== null) {
               rejectOnce(createTimeoutError(proc.exitCode, proc.signalCode));
@@ -311,10 +322,11 @@ export class YouTubeService {
       });
 
       proc.on("exit", (code, signal) => {
-        if (!timedOut || settled) {
+        processExit = { exitCode: code, signal };
+        if (!timedOut || !sigkillSent || settled) {
           return;
         }
-        // Unlike "close", "exit" cannot be held open by inherited stdio pipes.
+        // SIGKILL has reached the process group, and "exit" confirms the child ended.
         rejectOnce(createTimeoutError(code, signal));
       });
 
@@ -322,12 +334,15 @@ export class YouTubeService {
         if (settled) {
           return;
         }
-        settled = true;
-        clearTimers();
         if (timedOut) {
-          reject(createTimeoutError(code, signal));
+          processExit ??= { exitCode: code, signal };
+          if (sigkillSent) {
+            rejectOnce(createTimeoutError(code, signal));
+          }
           return;
         }
+        settled = true;
+        clearTimers();
         if (processError) {
           reject(processError);
           return;

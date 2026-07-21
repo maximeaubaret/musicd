@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { spawn } from "child_process";
+import { readFileSync } from "fs";
 
 import type { ChildProcess } from "child_process";
 
@@ -31,6 +32,33 @@ function createScriptService(
     timeoutMs: options.timeoutMs ?? 1_000,
     terminationGraceMs: options.terminationGraceMs,
   });
+}
+
+function isProcessRunning(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    if (process.platform === "linux") {
+      const processStat = readFileSync(`/proc/${processId}/stat`, "utf8");
+      const state = processStat.slice(processStat.lastIndexOf(")") + 2, -1)[0];
+      if (state === "Z") {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(processId: number): Promise<boolean> {
+  const deadline = Date.now() + 250;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(processId)) {
+      return true;
+    }
+    await Bun.sleep(10);
+  }
+  return !isProcessRunning(processId);
 }
 
 afterEach(() => {
@@ -178,6 +206,7 @@ describe("YouTubeService", () => {
     let child: ChildProcess | undefined;
     const service = createScriptService(`setInterval(() => {}, 1_000)`, {
       timeoutMs: 50,
+      terminationGraceMs: 25,
       onSpawn: (childProcess) => {
         child = childProcess;
       },
@@ -217,6 +246,50 @@ describe("YouTubeService", () => {
       signal: "SIGKILL",
     });
     expect(child?.signalCode).toBe("SIGKILL");
+  });
+
+  test("terminates descendants that outlive the yt-dlp parent", async () => {
+    let descendantProcessId: number | undefined;
+    const descendantScript = `process.on("SIGTERM", () => {}); setTimeout(() => process.exit(0), 1_000)`;
+    const service = createScriptService(
+      `const { spawn } = await import("child_process");
+       const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(descendantScript)}], {
+         stdio: ["ignore", "inherit", "inherit"]
+       });
+       console.log(descendant.pid);
+       setInterval(() => {}, 1_000);`,
+      {
+        timeoutMs: 100,
+        terminationGraceMs: 50,
+        onSpawn: (childProcess) => {
+          childProcess.stdout?.once("data", (data: Buffer) => {
+            descendantProcessId = Number(data.toString().trim());
+          });
+        },
+      },
+    );
+
+    try {
+      await expect(
+        service.getVideoInfo("https://www.youtube.com/watch?v=video-123"),
+      ).rejects.toMatchObject({
+        name: "YouTubeError",
+        code: "TIMEOUT",
+        operation: "metadata",
+      });
+      expect(descendantProcessId).toBeNumber();
+      if (descendantProcessId === undefined) {
+        throw new Error("Descendant process did not report its process ID");
+      }
+      expect(await waitForProcessExit(descendantProcessId)).toBe(true);
+    } finally {
+      if (
+        descendantProcessId !== undefined &&
+        isProcessRunning(descendantProcessId)
+      ) {
+        process.kill(descendantProcessId, "SIGKILL");
+      }
+    }
   });
 
   test("redacts YouTube query data from diagnostic logs", async () => {
