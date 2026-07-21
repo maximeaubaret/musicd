@@ -306,6 +306,19 @@ export function loadServerConfig(): ServerConfig {
 }
 
 /**
+ * Load server configuration when present.
+ * Missing configuration is a valid clean-install state; malformed configuration
+ * still raises a ConfigError.
+ */
+export function loadServerConfigIfPresent(): ServerConfig | null {
+  if (!existsSync(getServerConfigPath())) {
+    return null;
+  }
+
+  return loadServerConfig();
+}
+
+/**
  * Save server configuration to file
  */
 export function saveServerConfig(config: ServerConfig): void {

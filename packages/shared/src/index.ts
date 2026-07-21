@@ -33,6 +33,7 @@ export {
   JellyfinError,
   PlayerError,
   ConfigError,
+  SetupStorageError,
   AuthenticationError,
   YouTubeError,
 } from "./types";
@@ -68,6 +69,7 @@ export {
   resolveDaemonConnection,
   // Server config functions
   loadServerConfig,
+  loadServerConfigIfPresent,
   saveServerConfig,
 } from "./config";
 export type { CliConnectionArgs } from "./config";
@@ -81,6 +83,9 @@ export {
   getAuthFilePath,
 } from "./token-storage";
 export type { StoredAuth } from "./token-storage";
+
+// Setup storage
+export { recoverInterruptedSetup, saveSetupState } from "./setup-storage";
 
 // State storage
 export {

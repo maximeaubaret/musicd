@@ -112,7 +112,7 @@ describe("CLI daemon transport", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
-      "Refusing to send a daemon password over insecure HTTP",
+      "Refusing to send credentials over insecure HTTP",
     );
     expect(result.stdout).toBe("");
   });

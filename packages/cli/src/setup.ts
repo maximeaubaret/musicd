@@ -1,15 +1,21 @@
 import { createInterface } from "readline";
 import { stdin as input, stdout as output } from "process";
+
 import {
-  loadServerConfig,
+  ConfigError,
+  DEFAULT_JELLYFIN_URL,
+  JellyfinConfigSchema,
+  loadServerConfigIfPresent,
   resolveDaemonConnection,
-  getServerConfigPath,
-  clearAuth,
 } from "@musicd/shared";
 
 import { createDaemonClient } from "./daemon-connection";
 
-import type { CliConnectionArgs } from "@musicd/shared";
+import type {
+  CliConnectionArgs,
+  ResolvedDaemonConnection,
+} from "@musicd/shared";
+import type { AuthResponse } from "@musicd/client";
 
 /**
  * Prompt for user input
@@ -83,40 +89,18 @@ function promptPassword(question: string): Promise<string> {
  */
 export async function runSetup(
   connectionArgs?: CliConnectionArgs,
+  jellyfinServerUrl?: string,
 ): Promise<void> {
   console.log("🎵 Jellyfin Music Daemon Setup\n");
 
   try {
-    // Load server configuration for Jellyfin server URL
-    const serverConfig = loadServerConfig();
+    const result = await executeSetup({ connectionArgs, jellyfinServerUrl });
 
-    // Resolve daemon connection (uses CLI args, then profile, then defaults)
-    const connection = resolveDaemonConnection(connectionArgs || {});
-
-    console.log(`Jellyfin Server: ${serverConfig.jellyfin.serverUrl}`);
-    console.log(`(Edit ${getServerConfigPath()} to change server URL)\n`);
-
-    const { baseUrl: daemonUrl, client } = createDaemonClient(connection);
-
-    console.log(`Daemon: ${daemonUrl}`);
-    if (connection.profileName) {
-      console.log(`  (using profile: ${connection.profileName})`);
+    console.log(`Jellyfin Server: ${result.serverUrl}`);
+    console.log(`Daemon: ${result.daemonUrl}`);
+    if (result.profileName) {
+      console.log(`  (using profile: ${result.profileName})`);
     }
-    console.log("");
-
-    // Prompt for credentials
-    const username = await prompt("Jellyfin Username: ");
-    const password = await promptPassword("Jellyfin Password: ");
-
-    if (!username || !password) {
-      console.error("\n✗ Username and password are required");
-      process.exit(1);
-    }
-
-    console.log("\nAuthenticating...");
-
-    const result = await client.authenticate(username, password);
-
     console.log(`✓ Successfully authenticated as ${result.user.name}`);
     console.log("✓ Authentication token saved");
     console.log("\nSetup complete!");
@@ -125,8 +109,95 @@ export async function runSetup(
       "\n✗ Setup failed:",
       error instanceof Error ? error.message : error,
     );
-    // Clear any partial auth data
-    clearAuth();
-    process.exit(1);
+    process.exitCode = 1;
+  }
+}
+
+interface SetupDaemonClient {
+  authenticate(
+    username: string,
+    password: string,
+    serverUrl?: string,
+  ): Promise<AuthResponse>;
+}
+
+interface SetupClientConnection {
+  baseUrl: string;
+  client: SetupDaemonClient;
+}
+
+export interface ExecuteSetupOptions {
+  connectionArgs?: CliConnectionArgs;
+  jellyfinServerUrl?: string;
+}
+
+export interface SetupDependencies {
+  prompt: (question: string) => Promise<string>;
+  promptPassword: (question: string) => Promise<string>;
+  resolveConnection: (args: CliConnectionArgs) => ResolvedDaemonConnection;
+  createClient: (connection: ResolvedDaemonConnection) => SetupClientConnection;
+}
+
+export interface SetupResult extends AuthResponse {
+  daemonUrl: string;
+  profileName?: string;
+  serverUrl: string;
+}
+
+const DEFAULT_SETUP_DEPENDENCIES: SetupDependencies = {
+  prompt,
+  promptPassword,
+  resolveConnection: resolveDaemonConnection,
+  createClient: createDaemonClient,
+};
+
+/** Collect setup input and authenticate through the daemon API. */
+export async function executeSetup(
+  options: ExecuteSetupOptions,
+  dependencies: SetupDependencies = DEFAULT_SETUP_DEPENDENCIES,
+): Promise<SetupResult> {
+  try {
+    const existingConfig = loadServerConfigIfPresent();
+    const defaultServerUrl =
+      existingConfig?.jellyfin.serverUrl ?? DEFAULT_JELLYFIN_URL;
+    const enteredServerUrl =
+      options.jellyfinServerUrl ??
+      (await dependencies.prompt(
+        `Jellyfin Server URL [${defaultServerUrl}]: `,
+      ));
+    const serverUrl = enteredServerUrl.trim() || defaultServerUrl;
+    const serverConfigResult = JellyfinConfigSchema.safeParse({ serverUrl });
+    if (!serverConfigResult.success) {
+      throw new ConfigError("Jellyfin server URL must be a valid URL");
+    }
+
+    const connection = dependencies.resolveConnection(
+      options.connectionArgs ?? {},
+    );
+    const { baseUrl, client } = dependencies.createClient(connection);
+    const username = await dependencies.prompt("Jellyfin Username: ");
+    const password = await dependencies.promptPassword("Jellyfin Password: ");
+
+    if (!username || !password) {
+      throw new ConfigError("Username and password are required");
+    }
+
+    const result = await client.authenticate(
+      username,
+      password,
+      serverConfigResult.data.serverUrl,
+    );
+
+    return {
+      ...result,
+      daemonUrl: baseUrl,
+      profileName: connection.profileName,
+      serverUrl: serverConfigResult.data.serverUrl,
+    };
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new ConfigError(`Setup failed: ${String(error)}`);
   }
 }

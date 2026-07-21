@@ -132,7 +132,7 @@ export class JellyfinService {
   constructor(
     config: JellyfinConfig,
     authLoader: () => StoredAuth | null = loadAuth,
-    private readonly authSaver: AuthSaver = saveAuth,
+    private readonly authSaver: AuthSaver | null = saveAuth,
   ) {
     this.config = config;
 
@@ -190,10 +190,12 @@ export class JellyfinService {
       this.userId = result.User.Id;
 
       // Save to disk for future use
-      const authPath = getAuthFilePath();
-      logger.info(`Saving auth to ${authPath}`);
-      this.authSaver(result, username);
-      logger.info(`Auth saved successfully for user: ${username}`);
+      if (this.authSaver) {
+        const authPath = getAuthFilePath();
+        logger.info(`Saving auth to ${authPath}`);
+        this.authSaver(result, username);
+        logger.info(`Auth saved successfully for user: ${username}`);
+      }
 
       return result;
     } catch (error) {

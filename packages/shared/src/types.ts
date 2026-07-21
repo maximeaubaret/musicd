@@ -199,6 +199,13 @@ export class ConfigError extends Error {
   }
 }
 
+export class SetupStorageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SetupStorageError";
+  }
+}
+
 export class AuthenticationError extends Error {
   constructor(message: string) {
     super(message);

@@ -38,7 +38,7 @@ export interface StoredAuth {
   createdAt: number;
 }
 
-const StoredAuthSchema: z.ZodType<StoredAuth> = z.object({
+export const StoredAuthSchema: z.ZodType<StoredAuth> = z.object({
   accessToken: z.string().min(1),
   userId: z.string().min(1),
   serverId: z.string().min(1),

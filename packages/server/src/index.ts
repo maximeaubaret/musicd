@@ -2,8 +2,6 @@
 import { Hono } from "hono";
 
 import {
-  loadServerConfig,
-  hasAuth,
   getServerConfigPath,
   DEFAULT_AUDIO_DEVICE,
   saveQueueState,
@@ -17,8 +15,7 @@ import { FFPlayBackend } from "./services/playback";
 import { createApp } from "./app";
 import { logger } from "./logger";
 import { restorePersistedQueueState } from "./queue-state";
-
-import type { ServerConfig } from "@musicd/shared";
+import { createSetupModeApp, resolveServerStartup } from "./startup";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -42,6 +39,7 @@ if (printLogs) {
 
 async function main() {
   console.log("🎵 Starting Jellyfin Music Daemon...");
+  const startTime = Date.now();
 
   // Log config path if --print-logs is enabled
   if (logger.isEnabled()) {
@@ -49,33 +47,46 @@ async function main() {
     logger.debug(`  Server config path: ${getServerConfigPath()}`);
   }
 
-  const isConfigured = hasAuth();
-  if (!isConfigured) {
+  const startup = resolveServerStartup();
+  if (startup.mode === "setup") {
     console.warn("⚠ Not configured. Run 'musicd setup' to authenticate.");
     console.warn(
-      "  Starting in setup mode - only /api/auth endpoint available.",
+      "  Starting on loopback in setup mode - only /api/health and /api/auth are available.",
     );
+
+    const setupApp = createSetupModeApp(startup, startTime);
+    const setupServer = Bun.serve({
+      port: startup.binding.port,
+      hostname: startup.binding.host,
+      fetch: setupApp.fetch,
+    });
+
+    console.log(
+      `✓ Setup server started at http://${startup.binding.host}:${startup.binding.port}`,
+    );
+    console.log("  Complete setup, then restart the daemon.");
+
+    const signals = ["SIGINT", "SIGTERM"] as const;
+    for (const signal of signals) {
+      process.on(signal, () => {
+        setupServer.stop();
+        process.exit(0);
+      });
+    }
+    return;
   }
 
-  // Load configuration
-  let config: ServerConfig;
-  try {
-    config = loadServerConfig();
-    console.log(`✓ Configuration loaded`);
-    console.log(`  - Jellyfin: ${config.jellyfin.serverUrl}`);
-    console.log(`  - Daemon: ${config.daemon.host}:${config.daemon.port}`);
-    console.log(
-      `  - Audio device: ${config.audio?.device || DEFAULT_AUDIO_DEVICE}`,
-    );
-    if (config.daemon.password) {
-      console.log(`  - Authentication: enabled (password required)`);
-    } else {
-      console.log(`  - Authentication: disabled (no password set)`);
-    }
-  } catch (error) {
-    console.error("✗ Failed to load configuration:", error);
-    console.error("  Run 'musicd setup' to configure the server.");
-    process.exit(1);
+  const config = startup.config;
+  console.log(`✓ Configuration loaded`);
+  console.log(`  - Jellyfin: ${config.jellyfin.serverUrl}`);
+  console.log(`  - Daemon: ${config.daemon.host}:${config.daemon.port}`);
+  console.log(
+    `  - Audio device: ${config.audio?.device || DEFAULT_AUDIO_DEVICE}`,
+  );
+  if (config.daemon.password) {
+    console.log(`  - Authentication: enabled (password required)`);
+  } else {
+    console.log(`  - Authentication: disabled (no password set)`);
   }
 
   // Initialize services
@@ -86,7 +97,6 @@ async function main() {
     logger.isEnabled(),
   );
   const playerService = new PlayerService(backend);
-  const startTime = Date.now();
 
   // Check yt-dlp availability (non-fatal)
   const ytDlpAvailable = await youtubeService.checkAvailability();
@@ -137,19 +147,17 @@ async function main() {
     });
   }
 
-  // Verify connection to Jellyfin (only if already configured)
-  if (isConfigured) {
-    try {
-      await jellyfinService.verifyConnection();
-      console.log("✓ Connected to Jellyfin server");
-    } catch (error) {
-      console.error("✗ Failed to connect to Jellyfin:", error);
-      console.error(
-        "  Your authentication may have expired. Try running setup again:",
-      );
-      console.error("  musicd setup");
-      process.exit(1);
-    }
+  // Verify connection to Jellyfin
+  try {
+    await jellyfinService.verifyConnection();
+    console.log("✓ Connected to Jellyfin server");
+  } catch (error) {
+    console.error("✗ Failed to connect to Jellyfin:", error);
+    console.error(
+      "  Your authentication may have expired. Try running setup again:",
+    );
+    console.error("  musicd setup");
+    process.exit(1);
   }
 
   // Restore queue state if enabled
@@ -207,6 +215,7 @@ async function main() {
       playerService,
       startTime,
       daemonPassword: config.daemon.password,
+      jellyfinServerUrl: config.jellyfin.serverUrl,
       ytDlpAvailable,
     }),
   );
