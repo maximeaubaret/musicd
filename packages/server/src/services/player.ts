@@ -1,11 +1,6 @@
-import type {
-  PlaybackStatus,
-  JellyfinItem,
-  QueueItem,
-  JellyfinQueueItem,
-  QueueMode,
-} from "@musicd/shared";
 import { PlayerError } from "@musicd/shared";
+
+import type { PlaybackStatus, QueueItem, QueueMode } from "@musicd/shared";
 import type { PlaybackBackend } from "./playback/backend";
 
 export type StreamUrlResolver = (item: QueueItem) => Promise<string>;
@@ -226,32 +221,18 @@ export class PlayerService {
 
   /**
    * Add pre-built queue items (source-agnostic)
+   * @returns The queue position of the first newly added item
    */
-  addItems(items: QueueItem[], clearQueue: boolean = false): void {
+  addItems(items: QueueItem[], clearQueue: boolean = false): number {
     if (clearQueue) {
       this.queue = [];
       this.queuePosition = -1;
     }
 
+    const firstAddedPosition = this.queue.length;
     this.queue.push(...items);
     this.triggerStateSave();
-  }
-
-  /**
-   * Add Jellyfin items to the queue (convenience method)
-   */
-  addJellyfinItems(items: JellyfinItem[], clearQueue: boolean = false): void {
-    const queueItems: JellyfinQueueItem[] = items.map((item) => ({
-      id: item.Id,
-      name: item.Name,
-      artist: item.Artists?.[0],
-      album: item.Album,
-      duration: item.RunTimeTicks ? item.RunTimeTicks / 10000000 : 0,
-      source: "jellyfin" as const,
-      jellyfinItem: item,
-    }));
-
-    this.addItems(queueItems, clearQueue);
+    return firstAddedPosition;
   }
 
   /**

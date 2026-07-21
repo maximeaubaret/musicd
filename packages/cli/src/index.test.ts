@@ -12,8 +12,19 @@ async function runCli(
   args: string[],
   environment: Record<string, string> = {},
 ): Promise<CliResult> {
+  const preloadArgs = environment.MUSICD_CLI_TEST_SCENARIO
+    ? [
+        "--preload",
+        join(import.meta.dir, "../../server/src/api/queue-cli-test-preload.ts"),
+      ]
+    : [];
   const cliProcess = Bun.spawn(
-    [process.execPath, join(import.meta.dir, "index.ts"), ...args],
+    [
+      process.execPath,
+      ...preloadArgs,
+      join(import.meta.dir, "index.ts"),
+      ...args,
+    ],
     {
       env: { ...process.env, NO_COLOR: "1", ...environment },
       stderr: "pipe",
@@ -29,6 +40,48 @@ async function runCli(
 
   return { exitCode, stderr, stdout };
 }
+
+describe("CLI queue intent", () => {
+  test("browse -q prepares an empty stopped queue without playback", async () => {
+    const result = await runCli(["browse", "track", "-q"], {
+      MUSICD_CLI_TEST_SCENARIO: "stopped-empty-browse-queue",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Added to queue: Test Track");
+  });
+
+  test("queue add appends to an existing stopped queue without playback", async () => {
+    const result = await runCli(["queue", "add", "--id", "track-id"], {
+      MUSICD_CLI_TEST_SCENARIO: "stopped-existing-queue-add",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Added to queue by ID: track-id");
+  });
+
+  test("browse -q does not replace current playback", async () => {
+    const result = await runCli(["browse", "track", "-q"], {
+      MUSICD_CLI_TEST_SCENARIO: "playing-existing-browse-queue",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Added to queue: Test Track");
+  });
+
+  test("browse without -q replaces current playback immediately", async () => {
+    const result = await runCli(["browse", "track"], {
+      MUSICD_CLI_TEST_SCENARIO: "playing-existing-browse-play",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Playing: Test Track");
+  });
+});
 
 describe("CLI integer input validation", () => {
   test("--port rejects malformed, empty, and out-of-range values", async () => {

@@ -3,7 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { APP_VERSION } from "@musicd/shared";
 
 import { createApp } from "../app";
+import { MockBackend } from "../services/playback/mock-backend";
+import { PlayerService } from "../services/player";
 
+import type { JellyfinItem } from "@musicd/shared";
 import type {
   ApiClock,
   ApiJellyfinService,
@@ -29,7 +32,6 @@ const youtubeService: ApiYouTubeService = {
 
 const playerService = {
   addItems: failIfCalled,
-  addJellyfinItems: failIfCalled,
   clearQueue: failIfCalled,
   getQueue: failIfCalled,
   getQueueMode: failIfCalled,
@@ -63,6 +65,77 @@ function createTestApp(player: ApiPlayerService = playerService) {
     daemonPassword: "secret",
     ytDlpAvailable: false,
   });
+}
+
+function createAudioItem(id: string, name: string): JellyfinItem {
+  return {
+    Id: id,
+    Name: name,
+    Type: "Audio",
+    Artists: ["Test Artist"],
+    Album: "Test Album",
+    RunTimeTicks: 1_800_000_000,
+  };
+}
+
+interface QueueTestLibrary {
+  items: Record<string, JellyfinItem>;
+  albumTracks?: Record<string, JellyfinItem[]>;
+  artistTracks?: Record<string, JellyfinItem[]>;
+}
+
+interface QueueAddTestRequest {
+  itemIds: string[];
+  clearQueue?: boolean;
+  playNow?: boolean;
+}
+
+function createQueueTestApp(library: QueueTestLibrary) {
+  const backend = new MockBackend();
+  const player = new PlayerService(backend);
+  player.registerStreamUrlResolver(
+    "jellyfin",
+    async (item) => `http://test.local/stream/${item.id}`,
+  );
+
+  const app = createApp({
+    jellyfinService: {
+      ...jellyfinService,
+      getItem: async (id) => {
+        const item = library.items[id];
+        if (!item) {
+          throw new Error(`Missing test item: ${id}`);
+        }
+        return item;
+      },
+      getAlbumTracks: async (id) => library.albumTracks?.[id] ?? [],
+      getArtistTracks: async (id) => library.artistTracks?.[id] ?? [],
+    },
+    youtubeService,
+    playerService: player,
+    startTime: 0,
+  });
+
+  return app;
+}
+
+function addToQueue(
+  app: ReturnType<typeof createApp>,
+  request: QueueAddTestRequest,
+): Promise<Response> {
+  return Promise.resolve(
+    app.request("/api/queue/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+function getPlaybackStatus(
+  app: ReturnType<typeof createApp>,
+): Promise<Response> {
+  return Promise.resolve(app.request("/api/status"));
 }
 
 describe("API authentication", () => {
@@ -217,6 +290,199 @@ describe("POST /api/play validation", () => {
       success: false,
       error: "Invalid request",
       details: expect.any(Array),
+    });
+  });
+});
+
+describe("POST /api/queue/add playback behavior", () => {
+  test("playNow false prepares an empty stopped queue without starting playback", async () => {
+    const track = createAudioItem("new-track", "New Track");
+    const app = createQueueTestApp({ items: { [track.Id]: track } });
+
+    const response = await addToQueue(app, {
+      itemIds: [track.Id],
+      playNow: false,
+    });
+    const statusResponse = await getPlaybackStatus(app);
+
+    expect(response.status).toBe(200);
+    expect(await statusResponse.json()).toMatchObject({
+      state: "stopped",
+      currentItem: null,
+      queue: [
+        {
+          id: "new-track",
+          name: "New Track",
+          artist: "Test Artist",
+          album: "Test Album",
+          duration: 180,
+          source: "jellyfin",
+          jellyfinItem: track,
+        },
+      ],
+    });
+  });
+
+  test("playNow true starts the newly added selection in an existing stopped queue", async () => {
+    const queuedTrack = createAudioItem("queued-track", "Queued Track");
+    const newTrack = createAudioItem("new-track", "New Track");
+    const app = createQueueTestApp({
+      items: {
+        [queuedTrack.Id]: queuedTrack,
+        [newTrack.Id]: newTrack,
+      },
+    });
+
+    await addToQueue(app, { itemIds: [queuedTrack.Id], playNow: false });
+    const response = await addToQueue(app, {
+      itemIds: [newTrack.Id],
+      playNow: true,
+    });
+    const statusResponse = await getPlaybackStatus(app);
+
+    expect(response.status).toBe(200);
+    expect(await statusResponse.json()).toMatchObject({
+      state: "playing",
+      currentItem: { id: "new-track", name: "New Track" },
+      queuePosition: 1,
+      queue: [{ id: "queued-track" }, { id: "new-track" }],
+    });
+  });
+
+  test("playNow false appends without replacing current playback", async () => {
+    const currentTrack = createAudioItem("current-track", "Current Track");
+    const queuedTrack = createAudioItem("queued-track", "Queued Track");
+    const app = createQueueTestApp({
+      items: {
+        [currentTrack.Id]: currentTrack,
+        [queuedTrack.Id]: queuedTrack,
+      },
+    });
+
+    await addToQueue(app, { itemIds: [currentTrack.Id], playNow: true });
+    const response = await addToQueue(app, {
+      itemIds: [queuedTrack.Id],
+      playNow: false,
+    });
+    const statusResponse = await getPlaybackStatus(app);
+
+    expect(response.status).toBe(200);
+    expect(await statusResponse.json()).toMatchObject({
+      state: "playing",
+      currentItem: { id: "current-track", name: "Current Track" },
+      queuePosition: 0,
+      queue: [{ id: "current-track" }, { id: "queued-track" }],
+    });
+  });
+
+  test("playNow true replaces playback with the newly added selection", async () => {
+    const currentTrack = createAudioItem("current-track", "Current Track");
+    const newTrack = createAudioItem("new-track", "New Track");
+    const app = createQueueTestApp({
+      items: {
+        [currentTrack.Id]: currentTrack,
+        [newTrack.Id]: newTrack,
+      },
+    });
+
+    await addToQueue(app, { itemIds: [currentTrack.Id], playNow: true });
+    const response = await addToQueue(app, {
+      itemIds: [newTrack.Id],
+      playNow: true,
+    });
+    const statusResponse = await getPlaybackStatus(app);
+
+    expect(response.status).toBe(200);
+    expect(await statusResponse.json()).toMatchObject({
+      state: "playing",
+      currentItem: { id: "new-track", name: "New Track" },
+      queuePosition: 1,
+      queue: [{ id: "current-track" }, { id: "new-track" }],
+    });
+  });
+
+  test("playNow true with clearQueue keeps immediate-play replacement behavior", async () => {
+    const currentTrack = createAudioItem("current-track", "Current Track");
+    const newTrack = createAudioItem("new-track", "New Track");
+    const app = createQueueTestApp({
+      items: {
+        [currentTrack.Id]: currentTrack,
+        [newTrack.Id]: newTrack,
+      },
+    });
+
+    await addToQueue(app, { itemIds: [currentTrack.Id], playNow: true });
+    const response = await addToQueue(app, {
+      itemIds: [newTrack.Id],
+      clearQueue: true,
+      playNow: true,
+    });
+    const statusResponse = await getPlaybackStatus(app);
+
+    expect(response.status).toBe(200);
+    expect(await statusResponse.json()).toMatchObject({
+      state: "playing",
+      currentItem: { id: "new-track", name: "New Track" },
+      queuePosition: 0,
+      queue: [{ id: "new-track" }],
+    });
+  });
+
+  test("audio items, albums, and artists preserve track metadata and order", async () => {
+    const audio = {
+      ...createAudioItem("audio", "Audio Track"),
+      ProductionYear: 2024,
+      IndexNumber: 7,
+      MediaSources: [
+        {
+          Id: "media-audio",
+          Path: "/music/audio.flac",
+          Protocol: "File",
+          Container: "flac",
+        },
+      ],
+    };
+    const album: JellyfinItem = {
+      Id: "album",
+      Name: "Album",
+      Type: "MusicAlbum",
+    };
+    const artist: JellyfinItem = {
+      Id: "artist",
+      Name: "Artist",
+      Type: "MusicArtist",
+    };
+    const albumTrack = createAudioItem("album-track", "Album Track");
+    const artistTrack = createAudioItem("artist-track", "Artist Track");
+    const app = createQueueTestApp({
+      items: {
+        [audio.Id]: audio,
+        [album.Id]: album,
+        [artist.Id]: artist,
+      },
+      albumTracks: { [album.Id]: [albumTrack] },
+      artistTracks: { [artist.Id]: [artistTrack] },
+    });
+
+    const response = await addToQueue(app, {
+      itemIds: [audio.Id, album.Id, artist.Id],
+      playNow: false,
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      queue: [
+        expect.objectContaining({ id: "audio", jellyfinItem: audio }),
+        expect.objectContaining({
+          id: "album-track",
+          jellyfinItem: albumTrack,
+        }),
+        expect.objectContaining({
+          id: "artist-track",
+          jellyfinItem: artistTrack,
+        }),
+      ],
     });
   });
 });
