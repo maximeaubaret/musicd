@@ -8,6 +8,8 @@ import {
   PlayerError,
   YouTubeError,
   APP_VERSION,
+  QueueIndexStringSchema,
+  SearchLimitStringSchema,
 } from "@musicd/shared";
 
 import { YouTubeService } from "../services/youtube";
@@ -17,7 +19,7 @@ import type { JellyfinService } from "../services/jellyfin";
 import type { PlayerService } from "../services/player";
 
 const PlayRequestSchema = z.object({
-  itemId: z.string().min(1, "Item ID is required"),
+  itemId: z.string().min(1, "Item ID is required").optional(),
 });
 
 const QueueAddRequestSchema = z.object({
@@ -188,10 +190,32 @@ export function createApiRoutes(
    */
   app.post("/play", async (c) => {
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const rawBody = await c.req.text();
+      let body: unknown = {};
+      if (rawBody.length > 0) {
+        try {
+          body = JSON.parse(rawBody) as unknown;
+        } catch {
+          return c.json(
+            {
+              success: false,
+              error: "Invalid request",
+              details: [
+                {
+                  code: "custom",
+                  message: "Request body must be valid JSON",
+                  path: [],
+                },
+              ],
+            },
+            400,
+          );
+        }
+      }
+      const { itemId } = PlayRequestSchema.parse(body);
 
       // If no itemId provided, do smart play
-      if (!body.itemId) {
+      if (itemId === undefined) {
         await playerService.play();
         const status = await playerService.getStatus();
 
@@ -207,8 +231,6 @@ export function createApiRoutes(
       }
 
       // Otherwise, play specific item (add to queue and play)
-      const { itemId } = PlayRequestSchema.parse(body);
-
       // Auto-detect YouTube URLs
       if (YouTubeService.isYouTubeUrl(itemId)) {
         if (!ytDlpAvailable) {
@@ -738,9 +760,9 @@ export function createApiRoutes(
   app.post("/queue/remove/:index", async (c) => {
     try {
       const indexStr = c.req.param("index");
-      const index = parseInt(indexStr, 10);
+      const indexResult = QueueIndexStringSchema.safeParse(indexStr);
 
-      if (isNaN(index)) {
+      if (!indexResult.success) {
         return c.json(
           {
             success: false,
@@ -749,6 +771,7 @@ export function createApiRoutes(
           400,
         );
       }
+      const index = indexResult.data;
 
       playerService.removeFromQueue(index);
 
@@ -786,9 +809,9 @@ export function createApiRoutes(
   app.post("/queue/play/:index", async (c) => {
     try {
       const indexStr = c.req.param("index");
-      const index = parseInt(indexStr, 10);
+      const indexResult = QueueIndexStringSchema.safeParse(indexStr);
 
-      if (isNaN(index)) {
+      if (!indexResult.success) {
         return c.json(
           {
             success: false,
@@ -797,6 +820,7 @@ export function createApiRoutes(
           400,
         );
       }
+      const index = indexResult.data;
 
       await playerService.playFromQueue(index);
 
@@ -954,8 +978,11 @@ export function createApiRoutes(
         );
       }
 
-      const limit = limitStr ? parseInt(limitStr, 10) : 20;
-      if (isNaN(limit) || limit < 1 || limit > 100) {
+      const limitResult =
+        limitStr === undefined
+          ? { success: true as const, data: 20 }
+          : SearchLimitStringSchema.safeParse(limitStr);
+      if (!limitResult.success) {
         return c.json(
           {
             success: false,
@@ -964,6 +991,7 @@ export function createApiRoutes(
           400,
         );
       }
+      const limit = limitResult.data;
 
       const results = await jellyfinService.search(query, limit);
 

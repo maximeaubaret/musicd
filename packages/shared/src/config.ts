@@ -10,7 +10,11 @@ import type {
   ResolvedDaemonConnection,
 } from "./types";
 import { ConfigError } from "./types";
-import { CliConfigSchema, ServerConfigSchema } from "./schemas";
+import {
+  CliConfigSchema,
+  PortStringSchema,
+  ServerConfigSchema,
+} from "./schemas";
 import {
   DEFAULT_DAEMON_PORT,
   DEFAULT_DAEMON_HOST,
@@ -117,6 +121,15 @@ export interface CliConnectionArgs {
   profile?: string;
 }
 
+function parsePortEnvironmentVariable(value: string, name: string): number {
+  const result = PortStringSchema.safeParse(value);
+  if (!result.success) {
+    throw new ConfigError(`${name} must be an integer from 1 to 65535`);
+  }
+
+  return result.data;
+}
+
 /**
  * Resolve daemon connection from CLI config + CLI args + env vars
  * Priority (highest to lowest):
@@ -160,8 +173,8 @@ export function resolveDaemonConnection(
 
   const port =
     args.port ??
-    (process.env.DAEMON_PORT
-      ? parseInt(process.env.DAEMON_PORT, 10)
+    (process.env.DAEMON_PORT !== undefined
+      ? parsePortEnvironmentVariable(process.env.DAEMON_PORT, "DAEMON_PORT")
       : undefined) ??
     profile?.port ??
     DEFAULT_DAEMON_PORT;
@@ -211,9 +224,12 @@ export function loadServerConfig(): ServerConfig {
       parsed.daemon = parsed.daemon || {};
       parsed.daemon.host = process.env.DAEMON_BIND_HOST;
     }
-    if (process.env.DAEMON_BIND_PORT) {
+    if (process.env.DAEMON_BIND_PORT !== undefined) {
       parsed.daemon = parsed.daemon || {};
-      parsed.daemon.port = parseInt(process.env.DAEMON_BIND_PORT, 10);
+      parsed.daemon.port = parsePortEnvironmentVariable(
+        process.env.DAEMON_BIND_PORT,
+        "DAEMON_BIND_PORT",
+      );
     }
     if (process.env.DAEMON_PASSWORD) {
       parsed.daemon = parsed.daemon || {};

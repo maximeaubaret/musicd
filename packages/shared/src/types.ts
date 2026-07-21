@@ -156,7 +156,7 @@ export interface PlayOptions {
 
 // API request/response types
 export interface PlayRequest {
-  itemId: string;
+  itemId?: string;
 }
 
 export interface QueueAddRequest {
