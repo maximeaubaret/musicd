@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -12,12 +13,12 @@ async function runCli(
   args: string[],
   environment: Record<string, string> = {},
 ): Promise<CliResult> {
-  const preloadArgs = environment.MUSICD_CLI_TEST_SCENARIO
-    ? [
-        "--preload",
-        join(import.meta.dir, "../../server/src/api/queue-cli-test-preload.ts"),
-      ]
-    : [];
+  const preloadPath = environment.MUSICD_CLI_EXPECTED_URL
+    ? join(import.meta.dir, "connection-test-preload.ts")
+    : environment.MUSICD_CLI_TEST_SCENARIO
+      ? join(import.meta.dir, "../../server/src/api/queue-cli-test-preload.ts")
+      : undefined;
+  const preloadArgs = preloadPath ? ["--preload", preloadPath] : [];
   const cliProcess = Bun.spawn(
     [
       process.execPath,
@@ -40,6 +41,106 @@ async function runCli(
 
   return { exitCode, stderr, stdout };
 }
+
+describe("CLI daemon transport", () => {
+  test("remote HTTPS profiles work through the daemon client", async () => {
+    const configHome = mkdtempSync(join(tmpdir(), "musicd-cli-https-test-"));
+    const configDir = join(configHome, "musicd");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "cli.json"),
+      JSON.stringify({
+        defaultProfile: "remote",
+        profiles: {
+          remote: {
+            host: "music.example.com",
+            port: 443,
+            protocol: "https",
+            password: "secret",
+          },
+        },
+      }),
+    );
+
+    try {
+      const result = await runCli(["status"], {
+        XDG_CONFIG_HOME: configHome,
+        MUSICD_CLI_EXPECTED_URL: "https://music.example.com/api/status",
+        MUSICD_CLI_EXPECTED_AUTHORIZATION: "Bearer secret",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("No playback in progress");
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  test("CLI overrides select HTTPS for a remote password-bearing connection", async () => {
+    const result = await runCli(
+      [
+        "--protocol",
+        "https",
+        "--host",
+        "music.example.com",
+        "--port",
+        "443",
+        "--password",
+        "secret",
+        "status",
+      ],
+      {
+        MUSICD_CLI_EXPECTED_URL: "https://music.example.com/api/status",
+        MUSICD_CLI_EXPECTED_AUTHORIZATION: "Bearer secret",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("No playback in progress");
+  });
+
+  test("remote password-bearing HTTP fails without the explicit override", async () => {
+    const result = await runCli(
+      ["--host", "music.lan", "--password", "secret", "status"],
+      {
+        MUSICD_CLI_EXPECTED_URL: "http://music.lan:8765/api/status",
+        MUSICD_CLI_EXPECTED_AUTHORIZATION: "Bearer secret",
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Refusing to send a daemon password over insecure HTTP",
+    );
+    expect(result.stdout).toBe("");
+  });
+
+  test("the insecure HTTP override is clearly surfaced to the user", async () => {
+    const result = await runCli(
+      [
+        "--protocol",
+        "http",
+        "--host",
+        "music.lan",
+        "--password",
+        "secret",
+        "--allow-insecure-http",
+        "status",
+      ],
+      {
+        MUSICD_CLI_EXPECTED_URL: "http://music.lan:8765/api/status",
+        MUSICD_CLI_EXPECTED_AUTHORIZATION: "Bearer secret",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("Insecure HTTP override enabled");
+    expect(result.stderr).toContain("without transport encryption");
+    expect(result.stdout).toContain("No playback in progress");
+  });
+});
 
 describe("CLI queue intent", () => {
   test("browse -q prepares an empty stopped queue without playback", async () => {

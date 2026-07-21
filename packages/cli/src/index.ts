@@ -6,6 +6,7 @@ import {
   resolveDaemonConnection,
   APP_VERSION,
   isYouTubeUrl,
+  DaemonProtocolSchema,
   PortStringSchema,
   SearchLimitStringSchema,
 } from "@musicd/shared";
@@ -13,10 +14,11 @@ import { MusicDaemonClient } from "@musicd/client";
 
 import select from "./select-with-quit";
 import expandableSelect from "./expandable-select";
+import { createDaemonClient } from "./daemon-connection";
 import { runSetup } from "./setup";
 import { logger } from "./logger";
 
-import type { QueueItem, QueueMode } from "@musicd/shared";
+import type { DaemonProtocol, QueueItem, QueueMode } from "@musicd/shared";
 import type {
   PlaybackStatus,
   QueueAddResponse,
@@ -30,6 +32,15 @@ function parsePort(value: string): number {
   const result = PortStringSchema.safeParse(value);
   if (!result.success) {
     throw new InvalidArgumentError("Port must be an integer from 1 to 65535");
+  }
+
+  return result.data;
+}
+
+function parseDaemonProtocol(value: string): DaemonProtocol {
+  const result = DaemonProtocolSchema.safeParse(value);
+  if (!result.success) {
+    throw new InvalidArgumentError('Protocol must be either "http" or "https"');
   }
 
   return result.data;
@@ -59,7 +70,16 @@ program
   .option("--print-logs", "Enable debug logging")
   .option("--host <host>", "Daemon host address")
   .option("--port <port>", "Daemon port", parsePort)
+  .option(
+    "--protocol <protocol>",
+    "Daemon protocol (http or https)",
+    parseDaemonProtocol,
+  )
   .option("--password <password>", "Daemon password")
+  .option(
+    "--allow-insecure-http",
+    "Allow a daemon password over HTTP on a trusted network",
+  )
   .option("-p, --profile <name>", "Use named connection profile")
   .option("--json", "Output results as JSON");
 
@@ -76,18 +96,20 @@ function getClient(): MusicDaemonClient {
   const connection = resolveDaemonConnection({
     host: opts.host,
     port: opts.port,
+    protocol: opts.protocol,
     password: opts.password,
+    allowInsecureHttp: opts.allowInsecureHttp,
     profile: opts.profile,
   });
 
-  const baseUrl = `http://${connection.host}:${connection.port}`;
+  const { baseUrl, client } = createDaemonClient(connection);
 
   logger.debug("Daemon connection:");
   logger.debug(`  URL: ${baseUrl}`);
   logger.debug(`  Profile: ${connection.profileName || "(none)"}`);
   logger.debug(`  Password: ${connection.password ? "(set)" : "(not set)"}`);
 
-  _client = new MusicDaemonClient(baseUrl, connection.password);
+  _client = client;
 
   if (logger.isEnabled()) {
     _client.setLogger(logger);
@@ -223,7 +245,9 @@ program
     await runSetup({
       host: opts.host,
       port: opts.port,
+      protocol: opts.protocol,
       password: opts.password,
+      allowInsecureHttp: opts.allowInsecureHttp,
       profile: opts.profile,
     });
   });

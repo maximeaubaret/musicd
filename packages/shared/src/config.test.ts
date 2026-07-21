@@ -9,34 +9,110 @@ import { loadServerConfig, resolveDaemonConnection } from "./config";
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalDaemonPort = process.env.DAEMON_PORT;
 const originalDaemonBindPort = process.env.DAEMON_BIND_PORT;
+const originalDaemonProtocol = process.env.DAEMON_PROTOCOL;
+const originalDaemonPassword = process.env.DAEMON_PASSWORD;
+const originalAllowInsecureHttp = process.env.DAEMON_ALLOW_INSECURE_HTTP;
 
 let configHome: string;
+
+function restoreEnvironmentVariable(
+  name: string,
+  originalValue: string | undefined,
+): void {
+  if (originalValue === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = originalValue;
+  }
+}
 
 beforeEach(() => {
   configHome = mkdtempSync(join(tmpdir(), "musicd-config-test-"));
   process.env.XDG_CONFIG_HOME = configHome;
   delete process.env.DAEMON_PORT;
   delete process.env.DAEMON_BIND_PORT;
+  delete process.env.DAEMON_PROTOCOL;
+  delete process.env.DAEMON_PASSWORD;
+  delete process.env.DAEMON_ALLOW_INSECURE_HTTP;
 });
 
 afterEach(() => {
   rmSync(configHome, { recursive: true, force: true });
+  restoreEnvironmentVariable("XDG_CONFIG_HOME", originalXdgConfigHome);
+  restoreEnvironmentVariable("DAEMON_PORT", originalDaemonPort);
+  restoreEnvironmentVariable("DAEMON_BIND_PORT", originalDaemonBindPort);
+  restoreEnvironmentVariable("DAEMON_PROTOCOL", originalDaemonProtocol);
+  restoreEnvironmentVariable("DAEMON_PASSWORD", originalDaemonPassword);
+  restoreEnvironmentVariable(
+    "DAEMON_ALLOW_INSECURE_HTTP",
+    originalAllowInsecureHttp,
+  );
+});
 
-  if (originalXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
-  }
-  if (originalDaemonPort === undefined) {
-    delete process.env.DAEMON_PORT;
-  } else {
-    process.env.DAEMON_PORT = originalDaemonPort;
-  }
-  if (originalDaemonBindPort === undefined) {
-    delete process.env.DAEMON_BIND_PORT;
-  } else {
-    process.env.DAEMON_BIND_PORT = originalDaemonBindPort;
-  }
+describe("daemon connection protocol", () => {
+  test("profiles select HTTPS while existing profiles default to HTTP", () => {
+    const musicdConfigDir = join(configHome, "musicd");
+    mkdirSync(musicdConfigDir, { recursive: true });
+    writeFileSync(
+      join(musicdConfigDir, "cli.json"),
+      JSON.stringify({
+        profiles: {
+          local: { host: "127.0.0.1", port: 8765 },
+          remote: {
+            host: "music.example.com",
+            port: 443,
+            protocol: "https",
+          },
+        },
+      }),
+    );
+
+    expect(resolveDaemonConnection({ profile: "local" }).protocol).toBe("http");
+    expect(resolveDaemonConnection({ profile: "remote" }).protocol).toBe(
+      "https",
+    );
+  });
+
+  test("CLI settings override environment settings, which override profiles", () => {
+    const musicdConfigDir = join(configHome, "musicd");
+    mkdirSync(musicdConfigDir, { recursive: true });
+    writeFileSync(
+      join(musicdConfigDir, "cli.json"),
+      JSON.stringify({
+        defaultProfile: "remote",
+        profiles: {
+          remote: {
+            host: "profile.example.com",
+            port: 443,
+            protocol: "https",
+            password: "profile-password",
+            allowInsecureHttp: false,
+          },
+        },
+      }),
+    );
+
+    process.env.DAEMON_PROTOCOL = "http";
+    process.env.DAEMON_PASSWORD = "environment-password";
+    process.env.DAEMON_ALLOW_INSECURE_HTTP = "true";
+
+    expect(resolveDaemonConnection()).toMatchObject({
+      protocol: "http",
+      password: "environment-password",
+      allowInsecureHttp: true,
+    });
+    expect(
+      resolveDaemonConnection({
+        protocol: "https",
+        password: "cli-password",
+        allowInsecureHttp: false,
+      }),
+    ).toMatchObject({
+      protocol: "https",
+      password: "cli-password",
+      allowInsecureHttp: false,
+    });
+  });
 });
 
 describe("port environment configuration", () => {

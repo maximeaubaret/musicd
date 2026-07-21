@@ -5,6 +5,7 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import type {
   CliConfig,
+  DaemonProtocol,
   ServerConfig,
   DaemonProfile,
   ResolvedDaemonConnection,
@@ -12,6 +13,7 @@ import type {
 import { ConfigError } from "./types";
 import {
   CliConfigSchema,
+  DaemonProtocolSchema,
   PortStringSchema,
   ServerConfigSchema,
 } from "./schemas";
@@ -117,7 +119,9 @@ export function getProfile(
 export interface CliConnectionArgs {
   host?: string;
   port?: number;
+  protocol?: DaemonProtocol;
   password?: string;
+  allowInsecureHttp?: boolean;
   profile?: string;
 }
 
@@ -128,6 +132,28 @@ function parsePortEnvironmentVariable(value: string, name: string): number {
   }
 
   return result.data;
+}
+
+function parseProtocolEnvironmentVariable(
+  value: string,
+  name: string,
+): DaemonProtocol {
+  const result = DaemonProtocolSchema.safeParse(value);
+  if (!result.success) {
+    throw new ConfigError(`${name} must be either http or https`);
+  }
+
+  return result.data;
+}
+
+function parseBooleanEnvironmentVariable(value: string, name: string): boolean {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new ConfigError(`${name} must be either true or false`);
 }
 
 /**
@@ -179,13 +205,37 @@ export function resolveDaemonConnection(
     profile?.port ??
     DEFAULT_DAEMON_PORT;
 
+  const protocol =
+    args.protocol ??
+    (process.env.DAEMON_PROTOCOL !== undefined
+      ? parseProtocolEnvironmentVariable(
+          process.env.DAEMON_PROTOCOL,
+          "DAEMON_PROTOCOL",
+        )
+      : undefined) ??
+    profile?.protocol ??
+    "http";
+
   const password =
     args.password ?? process.env.DAEMON_PASSWORD ?? profile?.password;
+
+  const allowInsecureHttp =
+    args.allowInsecureHttp ??
+    (process.env.DAEMON_ALLOW_INSECURE_HTTP !== undefined
+      ? parseBooleanEnvironmentVariable(
+          process.env.DAEMON_ALLOW_INSECURE_HTTP,
+          "DAEMON_ALLOW_INSECURE_HTTP",
+        )
+      : undefined) ??
+    profile?.allowInsecureHttp ??
+    false;
 
   return {
     host,
     port,
+    protocol,
     password,
+    allowInsecureHttp,
     profileName: profile ? profileName : undefined,
   };
 }

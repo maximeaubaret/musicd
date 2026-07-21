@@ -115,14 +115,16 @@ bun install
 
 ### Global Options
 
-| Option                  | Description                  |
-| ----------------------- | ---------------------------- |
-| `--json`                | Output results as JSON       |
-| `--profile <name>`      | Use named connection profile |
-| `--host <host>`         | Daemon host address          |
-| `--port <port>`         | Daemon port                  |
-| `--password <password>` | Daemon password              |
-| `--print-logs`          | Enable debug logging         |
+| Option                  | Description                                     |
+| ----------------------- | ----------------------------------------------- |
+| `--json`                | Output results as JSON                          |
+| `--profile <name>`      | Use named connection profile                    |
+| `--host <host>`         | Daemon host address                             |
+| `--port <port>`         | Daemon port                                     |
+| `--protocol <protocol>` | Daemon protocol (`http` or `https`)             |
+| `--password <password>` | Daemon password                                 |
+| `--allow-insecure-http` | Allow a password over HTTP on a trusted network |
+| `--print-logs`          | Enable debug logging                            |
 
 The `--json` flag makes all commands output structured JSON to stdout, suitable for
 scripting and piping. Interactive commands (browse, queue) output data instead of
@@ -174,9 +176,17 @@ Connection profiles for the CLI:
       "password": "optional-api-password"
     },
     "home-server": {
+      "host": "music.example.com",
+      "port": 443,
+      "protocol": "https",
+      "password": "different-password"
+    },
+    "trusted-lan": {
       "host": "192.168.1.100",
       "port": 8765,
-      "password": "different-password"
+      "protocol": "http",
+      "password": "different-password",
+      "allowInsecureHttp": true
     }
   }
 }
@@ -188,7 +198,8 @@ Connection profiles for the CLI:
 
 musicd status
 musicd --profile home-server status
-musicd --host 10.0.0.5 --port 8765 --password secret status
+musicd --protocol https --host music.example.com --port 443 --password secret status
+musicd --host 10.0.0.5 --password secret --allow-insecure-http status
 
 # JSON output for scripting
 
@@ -210,15 +221,24 @@ musicd --json status
 
 **CLI:**
 
-| Variable          | Description               |
-| ----------------- | ------------------------- |
-| `DAEMON_HOST`     | Daemon host to connect to |
-| `DAEMON_PORT`     | Daemon port to connect to |
-| `DAEMON_PASSWORD` | API password              |
+| Variable                     | Description                                  |
+| ---------------------------- | -------------------------------------------- |
+| `DAEMON_HOST`                | Daemon host to connect to                    |
+| `DAEMON_PORT`                | Daemon port to connect to                    |
+| `DAEMON_PROTOCOL`            | Daemon protocol (`http` or `https`)          |
+| `DAEMON_PASSWORD`            | API password                                 |
+| `DAEMON_ALLOW_INSECURE_HTTP` | Allow password-bearing HTTP (`true`/`false`) |
 
 ### Security
 
 Set `daemon.password` in server config when exposing the daemon to your network. The CLI uses profiles or `DAEMON_PASSWORD` to authenticate.
+
+Password-bearing connections use HTTP only for recognized loopback hosts by
+default (`localhost`, `127.0.0.0/8`, and `::1`). Remote connections should use an
+HTTPS reverse proxy by setting `protocol` in a profile, `DAEMON_PROTOCOL=https`,
+or `--protocol https`. For an intentionally trusted network, set
+`allowInsecureHttp`, `DAEMON_ALLOW_INSECURE_HTTP=true`, or
+`--allow-insecure-http`; the CLI prints a warning whenever this exception is used.
 
 ## REST API
 

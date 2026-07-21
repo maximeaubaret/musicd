@@ -18,10 +18,14 @@ export const SearchLimitStringSchema = CompleteIntegerStringSchema.pipe(
 // CLI Config Schemas
 // ============================================
 
+export const DaemonProtocolSchema = z.enum(["http", "https"]);
+
 export const DaemonProfileSchema = z.object({
   host: z.string().min(1, "Host is required"),
   port: z.number().int().min(1).max(65535),
+  protocol: DaemonProtocolSchema.optional(),
   password: z.string().optional(),
+  allowInsecureHttp: z.boolean().optional(),
 });
 
 export const CliConfigSchema = z.object({

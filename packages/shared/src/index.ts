@@ -7,6 +7,7 @@ export type {
   StateConfig,
   ServerConfig,
   // CLI config types
+  DaemonProtocol,
   DaemonProfile,
   CliConfig,
   ResolvedDaemonConnection,
@@ -37,6 +38,7 @@ export {
 export {
   // CLI schemas
   DaemonProfileSchema,
+  DaemonProtocolSchema,
   CliConfigSchema,
   PortStringSchema,
   QueueIndexStringSchema,
