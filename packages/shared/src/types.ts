@@ -40,12 +40,19 @@ export interface ServerConfig {
 // CLI Configuration Types
 // ============================================
 
+/** Transport protocol for daemon API connections */
+export type DaemonProtocol = "http" | "https";
+
 /** A named profile for connecting to a musicd server */
 export interface DaemonProfile {
   /** Daemon host address */
   host: string;
   /** Daemon port */
   port: number;
+  /** Transport protocol (default: http) */
+  protocol?: DaemonProtocol;
+  /** Allow password-bearing HTTP connections to non-loopback hosts */
+  allowInsecureHttp?: boolean;
   /** Optional authentication password */
   password?: string;
 }
@@ -62,7 +69,9 @@ export interface CliConfig {
 export interface ResolvedDaemonConnection {
   host: string;
   port: number;
+  protocol: DaemonProtocol;
   password?: string;
+  allowInsecureHttp: boolean;
   /** Which profile was used (undefined if CLI args only) */
   profileName?: string;
 }

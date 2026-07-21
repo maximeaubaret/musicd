@@ -8,6 +8,102 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+describe("MusicDaemonClient transport security", () => {
+  test("sends password-bearing remote requests over HTTPS", async () => {
+    let request: Request | undefined;
+    const fetchMock = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        request =
+          input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+        return Response.json({ state: "stopped" });
+      },
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient(
+      "https://music.example.com:443",
+      "secret",
+    );
+
+    await client.status();
+
+    expect(request?.url).toBe("https://music.example.com/api/status");
+    expect(request?.headers.get("Authorization")).toBe("Bearer secret");
+  });
+
+  test("allows password-bearing HTTP for recognized loopback hosts", async () => {
+    const requestedUrls: string[] = [];
+    const fetchMock = mock(async (input: string | URL | Request) => {
+      requestedUrls.push(input.toString());
+      return Response.json({ state: "stopped" });
+    });
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+
+    for (const baseUrl of [
+      "http://localhost:8765",
+      "http://127.0.0.42:8765",
+      "http://[::1]:8765",
+    ]) {
+      await new MusicDaemonClient(baseUrl, "secret").status();
+    }
+
+    expect(requestedUrls).toEqual([
+      "http://localhost:8765/api/status",
+      "http://127.0.0.42:8765/api/status",
+      "http://[::1]:8765/api/status",
+    ]);
+  });
+
+  test("rejects password-bearing remote HTTP before sending a request", async () => {
+    let requestSent = false;
+    const fetchMock = mock(async () => {
+      requestSent = true;
+      return Response.json({ state: "stopped" });
+    });
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient(
+      "http://music.example.com:8765",
+      "secret",
+    );
+
+    await expect(client.status()).rejects.toThrow(
+      "Refusing to send a daemon password over insecure HTTP",
+    );
+    expect(requestSent).toBe(false);
+  });
+
+  test("allows explicitly trusted password-bearing remote HTTP", async () => {
+    const requests: Request[] = [];
+    const fetchMock = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+        requests.push(request);
+        return Response.json({ state: "stopped" });
+      },
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://music.lan:8765", "secret", {
+      allowInsecureHttp: true,
+    });
+
+    await client.status();
+
+    expect(requests[0]?.headers.get("Authorization")).toBe("Bearer secret");
+  });
+});
+
 describe("MusicDaemonClient queue modes", () => {
   test("explicitly sets and reads the resulting queue mode", async () => {
     const requests: Request[] = [];

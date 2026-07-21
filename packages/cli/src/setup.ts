@@ -1,12 +1,14 @@
 import { createInterface } from "readline";
 import { stdin as input, stdout as output } from "process";
-import { MusicDaemonClient } from "@musicd/client";
 import {
   loadServerConfig,
   resolveDaemonConnection,
   getServerConfigPath,
   clearAuth,
 } from "@musicd/shared";
+
+import { createDaemonClient } from "./daemon-connection";
+
 import type { CliConnectionArgs } from "@musicd/shared";
 
 /**
@@ -77,7 +79,7 @@ function promptPassword(question: string): Promise<string> {
 
 /**
  * Run the setup wizard
- * @param connectionArgs - Optional CLI connection args (--host, --port, --password, --profile)
+ * @param connectionArgs - Optional CLI connection args (--host, --port, --protocol, --password, --allow-insecure-http, --profile)
  */
 export async function runSetup(
   connectionArgs?: CliConnectionArgs,
@@ -94,7 +96,9 @@ export async function runSetup(
     console.log(`Jellyfin Server: ${serverConfig.jellyfin.serverUrl}`);
     console.log(`(Edit ${getServerConfigPath()} to change server URL)\n`);
 
-    console.log(`Daemon: http://${connection.host}:${connection.port}`);
+    const { baseUrl: daemonUrl, client } = createDaemonClient(connection);
+
+    console.log(`Daemon: ${daemonUrl}`);
     if (connection.profileName) {
       console.log(`  (using profile: ${connection.profileName})`);
     }
@@ -111,9 +115,6 @@ export async function runSetup(
 
     console.log("\nAuthenticating...");
 
-    // Create client and authenticate via daemon
-    const daemonUrl = `http://${connection.host}:${connection.port}`;
-    const client = new MusicDaemonClient(daemonUrl, connection.password);
     const result = await client.authenticate(username, password);
 
     console.log(`✓ Successfully authenticated as ${result.user.name}`);

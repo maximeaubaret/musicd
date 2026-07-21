@@ -51,6 +51,27 @@ export interface ClientLogger {
 export interface ClientOptions {
   /** Optional logger for request debugging */
   logger?: ClientLogger;
+  /** Allow sending a daemon password over HTTP to a non-loopback host */
+  allowInsecureHttp?: boolean;
+}
+
+/** Error raised when a daemon password would be sent without transport security. */
+export class InsecureDaemonConnectionError extends Error {
+  constructor() {
+    super(
+      "Refusing to send a daemon password over insecure HTTP. Use HTTPS or explicitly allow insecure HTTP for a trusted network.",
+    );
+    this.name = "InsecureDaemonConnectionError";
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "localhost." ||
+    hostname === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(hostname)
+  );
 }
 
 /**
@@ -58,6 +79,7 @@ export interface ClientOptions {
  */
 export class MusicDaemonClient {
   private logger?: ClientLogger;
+  private allowInsecureHttp: boolean;
 
   constructor(
     private baseUrl: string,
@@ -65,6 +87,7 @@ export class MusicDaemonClient {
     options?: ClientOptions,
   ) {
     this.logger = options?.logger;
+    this.allowInsecureHttp = options?.allowInsecureHttp ?? false;
   }
 
   /**
@@ -86,6 +109,16 @@ export class MusicDaemonClient {
     const url = `${this.baseUrl}/api${endpoint}`;
 
     try {
+      const daemonUrl = new URL(this.baseUrl);
+      if (
+        this.password &&
+        daemonUrl.protocol === "http:" &&
+        !isLoopbackHostname(daemonUrl.hostname) &&
+        !this.allowInsecureHttp
+      ) {
+        throw new InsecureDaemonConnectionError();
+      }
+
       const headers: Record<string, string> = {};
 
       // Add Content-Type for POST requests with body
