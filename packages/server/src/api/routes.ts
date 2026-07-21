@@ -24,17 +24,50 @@ const QueueAddRequestSchema = z.object({
   playNow: z.boolean().optional().default(false),
 });
 
+export interface ApiJellyfinService {
+  authenticate: JellyfinService["authenticate"];
+  getAlbumTracks: JellyfinService["getAlbumTracks"];
+  getArtistTracks: JellyfinService["getArtistTracks"];
+  getItem: JellyfinService["getItem"];
+  search: JellyfinService["search"];
+}
+
+export interface ApiYouTubeService {
+  createQueueItem: YouTubeService["createQueueItem"];
+}
+
+export interface ApiPlayerService {
+  addItems: PlayerService["addItems"];
+  addJellyfinItems: PlayerService["addJellyfinItems"];
+  clearQueue: PlayerService["clearQueue"];
+  getQueue: PlayerService["getQueue"];
+  getQueuePosition: PlayerService["getQueuePosition"];
+  getStatus: PlayerService["getStatus"];
+  isPlaying: PlayerService["isPlaying"];
+  pause: PlayerService["pause"];
+  play: PlayerService["play"];
+  playFromQueue: PlayerService["playFromQueue"];
+  playNext: PlayerService["playNext"];
+  playPrevious: PlayerService["playPrevious"];
+  removeFromQueue: PlayerService["removeFromQueue"];
+  resume: PlayerService["resume"];
+  stop: PlayerService["stop"];
+}
+
+export interface ApiClock {
+  now(): number;
+}
+
+const SYSTEM_CLOCK: ApiClock = {
+  now: () => Date.now(),
+};
+
 /**
  * Authentication middleware for Bearer token validation
  * Validates the Authorization header against the configured daemon password
  */
 function createAuthMiddleware(requiredPassword?: string) {
   return async (c: Context, next: Next) => {
-    // Health endpoint is always public
-    if (c.req.path === "/health") {
-      return next();
-    }
-
     // If no password is configured, skip authentication
     if (!requiredPassword) {
       return next();
@@ -84,14 +117,28 @@ function createAuthMiddleware(requiredPassword?: string) {
 }
 
 export function createApiRoutes(
-  jellyfinService: JellyfinService,
-  youtubeService: YouTubeService,
-  playerService: PlayerService,
+  jellyfinService: ApiJellyfinService,
+  youtubeService: ApiYouTubeService,
+  playerService: ApiPlayerService,
   startTime: number,
   daemonPassword?: string,
   ytDlpAvailable: boolean = false,
-) {
+  clock: ApiClock = SYSTEM_CLOCK,
+): Hono {
   const app = new Hono();
+
+  /**
+   * GET /health - Health check endpoint (no auth required)
+   */
+  app.get("/health", async (c) => {
+    const uptime = Math.floor((clock.now() - startTime) / 1000);
+    return c.json({
+      success: true,
+      status: "healthy",
+      uptime,
+      version: APP_VERSION,
+    });
+  });
 
   // Apply authentication middleware to all routes
   const authMiddleware = createAuthMiddleware(daemonPassword);
@@ -1010,19 +1057,6 @@ export function createApiRoutes(
         500,
       );
     }
-  });
-
-  /**
-   * GET /health - Health check endpoint (no auth required)
-   */
-  app.get("/health", async (c) => {
-    const uptime = Math.floor((Date.now() - startTime) / 1000);
-    return c.json({
-      success: true,
-      status: "healthy",
-      uptime,
-      version: APP_VERSION,
-    });
   });
 
   return app;
