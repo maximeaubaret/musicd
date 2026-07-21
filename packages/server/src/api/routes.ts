@@ -35,6 +35,11 @@ const QueueAddRequestSchema = z.object({
   playNow: z.boolean().optional().default(false),
 });
 
+const QueueModeRequestSchema = z.object({
+  loop: z.boolean().optional(),
+  random: z.boolean().optional(),
+});
+
 export interface ApiJellyfinService {
   authenticate: JellyfinService["authenticate"];
   getAlbumTracks: JellyfinService["getAlbumTracks"];
@@ -103,6 +108,49 @@ function createUnauthorizedResponse(
   error: string,
 ): Promise<Response> {
   return Promise.resolve(c.json({ success: false, error }, 401));
+}
+
+interface ValidJsonBody {
+  success: true;
+  body: unknown;
+}
+
+interface InvalidJsonBody {
+  success: false;
+  response: Response;
+}
+
+type JsonBodyResult = ValidJsonBody | InvalidJsonBody;
+
+async function parseJsonRequestBody(
+  c: Context,
+  emptyBody?: unknown,
+): Promise<JsonBodyResult> {
+  try {
+    const rawBody = await c.req.text();
+    if (rawBody.length === 0) {
+      return { success: true, body: emptyBody };
+    }
+    return { success: true, body: JSON.parse(rawBody) as unknown };
+  } catch {
+    return {
+      success: false,
+      response: c.json(
+        {
+          success: false,
+          error: "Invalid request",
+          details: [
+            {
+              code: "custom",
+              message: "Request body must be valid JSON",
+              path: [],
+            },
+          ],
+        },
+        400,
+      ),
+    };
+  }
 }
 
 /**
@@ -220,29 +268,11 @@ export function createApiRoutes(
    */
   app.post("/play", async (c) => {
     try {
-      const rawBody = await c.req.text();
-      let body: unknown = {};
-      if (rawBody.length > 0) {
-        try {
-          body = JSON.parse(rawBody) as unknown;
-        } catch {
-          return c.json(
-            {
-              success: false,
-              error: "Invalid request",
-              details: [
-                {
-                  code: "custom",
-                  message: "Request body must be valid JSON",
-                  path: [],
-                },
-              ],
-            },
-            400,
-          );
-        }
+      const bodyResult = await parseJsonRequestBody(c, {});
+      if (!bodyResult.success) {
+        return bodyResult.response;
       }
-      const { itemId } = PlayRequestSchema.parse(body);
+      const { itemId } = PlayRequestSchema.parse(bodyResult.body);
 
       // If no itemId provided, do smart play
       if (itemId === undefined) {
@@ -943,6 +973,46 @@ export function createApiRoutes(
   });
 
   /**
+   * POST /api/queue/mode - Explicitly set queue mode settings
+   */
+  app.post("/queue/mode", async (c) => {
+    try {
+      const bodyResult = await parseJsonRequestBody(c);
+      if (!bodyResult.success) {
+        return bodyResult.response;
+      }
+      const mode = QueueModeRequestSchema.parse(bodyResult.body);
+      playerService.setQueueMode(mode);
+
+      return c.json({
+        success: true,
+        message: "Queue mode updated",
+        queueMode: playerService.getQueueMode(),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return c.json(
+          {
+            success: false,
+            error: "Invalid request",
+            details: error.errors,
+          },
+          400,
+        );
+      }
+
+      console.error("Error setting queue mode:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to set queue mode",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
    * GET /api/queue/mode - Get current queue mode settings
    */
   app.get("/queue/mode", async (c) => {
@@ -1197,6 +1267,7 @@ export function createApiRoutes(
 
 export interface ApiPlayerService {
   getQueueMode: PlayerService["getQueueMode"];
+  setQueueMode: PlayerService["setQueueMode"];
   shuffleQueue: PlayerService["shuffleQueue"];
   toggleLoop: PlayerService["toggleLoop"];
   toggleRandom: PlayerService["toggleRandom"];

@@ -4,7 +4,7 @@ import { createApp } from "../app";
 import { MockBackend } from "../services/playback/mock-backend";
 import { PlayerService } from "../services/player";
 
-import type { JellyfinItem, PlaybackState } from "@musicd/shared";
+import type { JellyfinItem, PlaybackState, QueueMode } from "@musicd/shared";
 import type { ApiJellyfinService, ApiYouTubeService } from "./routes";
 
 interface CliScenario {
@@ -14,6 +14,7 @@ interface CliScenario {
   expectedCurrentItemId: string | null;
   expectedQueueIds: string[];
   expectedQueuePosition: number;
+  initialQueueMode?: QueueMode;
 }
 
 const currentTrack: JellyfinItem = {
@@ -67,6 +68,15 @@ const scenarios: Record<string, CliScenario> = {
     expectedQueueIds: ["track-id"],
     expectedQueuePosition: 0,
   },
+  "loop-enabled-queue-add": {
+    initialItems: [currentTrack],
+    initiallyPlaying: false,
+    expectedState: "stopped",
+    expectedCurrentItemId: null,
+    expectedQueueIds: ["current-id", "track-id"],
+    expectedQueuePosition: -1,
+    initialQueueMode: { loop: true, random: false },
+  },
 };
 
 function getScenario(name: string | undefined): CliScenario {
@@ -112,6 +122,9 @@ player.registerStreamUrlResolver(
   async (item) => `http://test.local/stream/${item.id}`,
 );
 player.addItems(createJellyfinQueueItems(scenario.initialItems));
+if (scenario.initialQueueMode) {
+  player.setQueueMode(scenario.initialQueueMode);
+}
 if (scenario.initiallyPlaying) {
   await player.playFromQueue(0);
 }

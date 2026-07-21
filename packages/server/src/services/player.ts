@@ -275,11 +275,19 @@ export class PlayerService {
       let nextPosition: number;
       if (this.queue.length === 1) {
         nextPosition = 0;
+      } else if (
+        this.queuePosition >= 0 &&
+        this.queuePosition < this.queue.length
+      ) {
+        const randomPosition = Math.floor(
+          Math.random() * (this.queue.length - 1),
+        );
+        nextPosition =
+          randomPosition >= this.queuePosition
+            ? randomPosition + 1
+            : randomPosition;
       } else {
-        // Pick a random position different from current
-        do {
-          nextPosition = Math.floor(Math.random() * this.queue.length);
-        } while (nextPosition === this.queuePosition);
+        nextPosition = Math.floor(Math.random() * this.queue.length);
       }
       await this.playFromQueue(nextPosition);
       return;
@@ -426,9 +434,9 @@ export class PlayerService {
         [otherItems[i], otherItems[j]] = [otherItems[j], otherItems[i]];
       }
 
-      // Reconstruct queue with current track at position 0
-      this.queue = [currentItem, ...otherItems];
-      this.queuePosition = 0;
+      // Reconstruct the queue around the unchanged active position.
+      this.queue = otherItems;
+      this.queue.splice(this.queuePosition, 0, currentItem);
     } else {
       // Not playing: shuffle entire queue
       for (let i = this.queue.length - 1; i > 0; i--) {

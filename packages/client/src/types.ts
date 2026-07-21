@@ -129,4 +129,10 @@ export interface QueueModeResponse {
   queueMode: QueueMode;
 }
 
+/** Response from GET /queue/mode */
+export interface QueueModeStatusResponse {
+  success: boolean;
+  queueMode: QueueMode;
+}
+
 export { PlaybackStatus, QueueMode };

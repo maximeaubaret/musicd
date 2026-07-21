@@ -456,6 +456,128 @@ describe("PlayerService", () => {
     });
   });
 
+  describe("Queue modes", () => {
+    test("loop wraps from the queue end to the first track", async () => {
+      addJellyfinItems(player, createMockQueue(3));
+      await player.playFromQueue(2);
+      player.setQueueMode({ loop: true });
+
+      await player.playNext();
+
+      const status = await player.getStatus();
+      expect(status.state).toBe("playing");
+      expect(status.queuePosition).toBe(0);
+      expect(status.currentItem?.id).toBe("item-0");
+    });
+
+    test("random chooses a valid next track and updates the active position", async () => {
+      addJellyfinItems(player, createMockQueue(3));
+      await player.playFromQueue(0);
+      player.setQueueMode({ random: true });
+      const originalRandom = Math.random;
+      Math.random = () => 0.99;
+
+      try {
+        await player.playNext();
+      } finally {
+        Math.random = originalRandom;
+      }
+
+      const status = await player.getStatus();
+      if (!status.currentItem) {
+        throw new Error("Expected random playback to select an active item");
+      }
+      expect(status.queuePosition).toBeGreaterThanOrEqual(0);
+      expect(status.queuePosition).toBeLessThan(status.queue.length);
+      expect(status.queue[status.queuePosition].id).toBe(status.currentItem.id);
+      expect(status.currentItem.id).not.toBe("item-0");
+    });
+
+    test("shuffle preserves the active track and position while playing", async () => {
+      addJellyfinItems(player, createMockQueue(4));
+      await player.playFromQueue(2);
+      const activeItem = (await player.getStatus()).currentItem;
+      if (!activeItem) {
+        throw new Error("Expected an active item before shuffling");
+      }
+      const originalRandom = Math.random;
+      Math.random = () => 0;
+
+      try {
+        player.shuffleQueue();
+      } finally {
+        Math.random = originalRandom;
+      }
+
+      const status = await player.getStatus();
+      expect(status.state).toBe("playing");
+      expect(status.currentItem).toEqual(activeItem);
+      expect(status.queuePosition).toBe(2);
+      expect(status.queue[status.queuePosition].id).toBe(activeItem.id);
+    });
+
+    test("shuffle preserves the active track and position while paused", async () => {
+      addJellyfinItems(player, createMockQueue(4));
+      await player.playFromQueue(2);
+      player.pause();
+      const activeItem = (await player.getStatus()).currentItem;
+      if (!activeItem) {
+        throw new Error("Expected an active item before shuffling");
+      }
+      const originalRandom = Math.random;
+      Math.random = () => 0;
+
+      try {
+        player.shuffleQueue();
+      } finally {
+        Math.random = originalRandom;
+      }
+
+      const status = await player.getStatus();
+      expect(status.state).toBe("paused");
+      expect(status.currentItem).toEqual(activeItem);
+      expect(status.queuePosition).toBe(2);
+      expect(status.queue[status.queuePosition].id).toBe(activeItem.id);
+    });
+
+    test("mode changes trigger persistence and survive a restore", () => {
+      addJellyfinItems(player, createMockQueue(2));
+      let savedState: ReturnType<PlayerService["getQueueState"]> | undefined;
+      player.enableStatePersistence(() => {
+        savedState = player.getQueueState();
+      });
+
+      player.setQueueMode({ loop: true, random: true });
+
+      if (!savedState) {
+        throw new Error("Expected queue mode change to trigger persistence");
+      }
+      const restoredPlayer = new PlayerService(new MockBackend());
+      restoredPlayer.restoreQueueState(savedState);
+      expect(restoredPlayer.getQueueMode()).toEqual({
+        loop: true,
+        random: true,
+      });
+      expect(restoredPlayer.getQueue()).toHaveLength(2);
+    });
+
+    test("restores persisted modes when the queue is empty", () => {
+      const restoredPlayer = new PlayerService(new MockBackend());
+
+      restoredPlayer.restoreQueueState({
+        queue: [],
+        position: -1,
+        queueMode: { loop: true, random: true },
+      });
+
+      expect(restoredPlayer.getQueue()).toEqual([]);
+      expect(restoredPlayer.getQueueMode()).toEqual({
+        loop: true,
+        random: true,
+      });
+    });
+  });
+
   describe("Auto-advance", () => {
     // NOTE: These tests use MockBackend to simulate track completion.
     // The real FFPlayBackend detects completion via process exit events.

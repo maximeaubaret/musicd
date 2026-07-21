@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import { Command, InvalidArgumentError } from "commander";
 import chalk from "chalk";
-import select from "./select-with-quit";
-import expandableSelect from "./expandable-select";
+
 import {
   resolveDaemonConnection,
   APP_VERSION,
@@ -10,11 +9,20 @@ import {
   PortStringSchema,
   SearchLimitStringSchema,
 } from "@musicd/shared";
-import type { QueueItem } from "@musicd/shared";
-import type { PlaybackStatus, SearchResult, TrackInfo } from "@musicd/client";
 import { MusicDaemonClient } from "@musicd/client";
+
+import select from "./select-with-quit";
+import expandableSelect from "./expandable-select";
 import { runSetup } from "./setup";
 import { logger } from "./logger";
+
+import type { QueueItem, QueueMode } from "@musicd/shared";
+import type {
+  PlaybackStatus,
+  QueueAddResponse,
+  SearchResult,
+  TrackInfo,
+} from "@musicd/client";
 
 const program = new Command();
 
@@ -34,6 +42,16 @@ function parseSearchLimit(value: string): number {
   }
 
   return result.data;
+}
+
+function parseQueueModeState(value: string): boolean {
+  if (value === "on") {
+    return true;
+  }
+  if (value === "off") {
+    return false;
+  }
+  throw new InvalidArgumentError('State must be either "on" or "off"');
 }
 
 // Global options for daemon connection
@@ -102,6 +120,54 @@ function outputJsonError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
   console.error(JSON.stringify({ error: message }, null, 2));
   process.exit(1);
+}
+
+interface QueueAddOutcome {
+  result: QueueAddResponse;
+  queueMode?: QueueMode;
+}
+
+async function addQueueItem(
+  itemId: string,
+  enableLoop: boolean,
+): Promise<QueueAddOutcome> {
+  try {
+    const result = await getClient().addToQueue([itemId], {
+      clearQueue: false,
+      playNow: false,
+    });
+    if (!enableLoop) {
+      return { result };
+    }
+
+    const modeResult = await getClient().setQueueMode({ loop: true });
+    return { result, queueMode: modeResult.queueMode };
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(`Failed to add queue item: ${String(error)}`);
+  }
+}
+
+function completeQueueAdd(
+  outcome: QueueAddOutcome,
+  printSuccess: () => void,
+): void {
+  const { result, queueMode } = outcome;
+  if (isJsonMode()) {
+    outputJson(queueMode ? { ...result, queueMode } : result);
+  }
+
+  printSuccess();
+  console.log(
+    chalk.gray(
+      `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+    ),
+  );
+  if (queueMode?.loop) {
+    console.log(chalk.green("⟳ Loop enabled"));
+  }
 }
 
 // Hook to enable logger before any command
@@ -840,16 +906,18 @@ queueCmd
 
 queueCmd
   .command("loop")
-  .description(
-    "Toggle queue loop mode (replay from beginning when reaching end)",
-  )
-  .action(async () => {
+  .description("Set queue loop mode, or toggle it when state is omitted")
+  .argument("[state]", "Explicit state: on or off", parseQueueModeState)
+  .action(async (enabled: boolean | undefined) => {
     try {
-      const result = await getClient().toggleLoop();
+      const result =
+        enabled === undefined
+          ? await getClient().toggleLoop()
+          : await getClient().setQueueMode({ loop: enabled });
       if (isJsonMode()) {
         outputJson(result);
       }
-      if (result.loop) {
+      if (result.queueMode.loop) {
         console.log(
           chalk.green("⟳ Loop enabled") + chalk.gray(" - Queue will repeat"),
         );
@@ -870,16 +938,18 @@ queueCmd
 
 queueCmd
   .command("random")
-  .description(
-    "Toggle random mode (pick random next track instead of sequential)",
-  )
-  .action(async () => {
+  .description("Set random mode, or toggle it when state is omitted")
+  .argument("[state]", "Explicit state: on or off", parseQueueModeState)
+  .action(async (enabled: boolean | undefined) => {
     try {
-      const result = await getClient().toggleRandom();
+      const result =
+        enabled === undefined
+          ? await getClient().toggleRandom()
+          : await getClient().setQueueMode({ random: enabled });
       if (isJsonMode()) {
         outputJson(result);
       }
-      if (result.random) {
+      if (result.queueMode.random) {
         console.log(
           chalk.green("🔀 Random enabled") +
             chalk.gray(" - Playing in random order"),
@@ -957,62 +1027,29 @@ queueCmd
           process.stdout.write(chalk.gray(`[YouTube] Adding YouTube URL...\n`));
         }
 
-        const result = await getClient().addToQueue([options.youtubeUrl], {
-          clearQueue: false,
-          playNow: false,
+        const outcome = await addQueueItem(
+          options.youtubeUrl,
+          options.loop === true,
+        );
+        completeQueueAdd(outcome, () => {
+          console.log(
+            chalk.green("✓ Added to queue:"),
+            chalk.red("[YouTube]"),
+            chalk.bold(options.youtubeUrl),
+          );
         });
-
-        if (isJsonMode()) {
-          outputJson(result);
-        }
-
-        console.log(
-          chalk.green("✓ Added to queue:"),
-          chalk.red("[YouTube]"),
-          chalk.bold(options.youtubeUrl),
-        );
-        console.log(
-          chalk.gray(
-            `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
-          ),
-        );
-        // Enable loop mode if --loop flag was passed
-        if (options.loop) {
-          const loopResult = await getClient().toggleLoop();
-          if (loopResult.loop) {
-            console.log(chalk.green("⟳ Loop enabled"));
-          }
-        }
         return;
       }
 
       // If --id is provided, add directly by Jellyfin ID (no URL detection)
       if (options.id) {
-        const result = await getClient().addToQueue([options.id], {
-          clearQueue: false,
-          playNow: false,
+        const outcome = await addQueueItem(options.id, options.loop === true);
+        completeQueueAdd(outcome, () => {
+          console.log(
+            chalk.green("✓ Added to queue by ID:"),
+            chalk.bold(options.id),
+          );
         });
-
-        if (isJsonMode()) {
-          outputJson(result);
-        }
-
-        console.log(
-          chalk.green("✓ Added to queue by ID:"),
-          chalk.bold(options.id),
-        );
-        console.log(
-          chalk.gray(
-            `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
-          ),
-        );
-        // Enable loop mode if --loop flag was passed
-        if (options.loop) {
-          const loopResult = await getClient().toggleLoop();
-          if (loopResult.loop) {
-            console.log(chalk.green("⟳ Loop enabled"));
-          }
-        }
         return;
       }
 
@@ -1024,32 +1061,14 @@ queueCmd
           );
         }
 
-        const result = await getClient().addToQueue([query], {
-          clearQueue: false,
-          playNow: false,
+        const outcome = await addQueueItem(query, options.loop === true);
+        completeQueueAdd(outcome, () => {
+          console.log(
+            chalk.green("✓ Added to queue:"),
+            chalk.red("[YouTube]"),
+            chalk.bold(query),
+          );
         });
-
-        if (isJsonMode()) {
-          outputJson(result);
-        }
-
-        console.log(
-          chalk.green("✓ Added to queue:"),
-          chalk.red("[YouTube]"),
-          chalk.bold(query),
-        );
-        console.log(
-          chalk.gray(
-            `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
-          ),
-        );
-        // Enable loop mode if --loop flag was passed
-        if (options.loop) {
-          const loopResult = await getClient().toggleLoop();
-          if (loopResult.loop) {
-            console.log(chalk.green("⟳ Loop enabled"));
-          }
-        }
         return;
       }
 
@@ -1059,13 +1078,18 @@ queueCmd
       }
       const searchResult = await getClient().search(query!);
 
-      if (isJsonMode()) {
-        outputJson(searchResult);
-      }
-
       if (searchResult.count === 0) {
+        if (isJsonMode()) {
+          outputJsonError(new Error("No results found"));
+        }
         console.log(chalk.yellow("✗ No results found"));
         process.exit(1);
+      }
+
+      if (isJsonMode() && searchResult.count > 1) {
+        outputJsonError(
+          new Error("Multiple results found; use --id to select one"),
+        );
       }
 
       let selectedItem: SearchResult | null;
@@ -1073,7 +1097,9 @@ queueCmd
       // If only one result, auto-select it
       if (searchResult.count === 1) {
         selectedItem = searchResult.results[0];
-        console.log(chalk.gray(`✓ Found 1 match`));
+        if (!isJsonMode()) {
+          console.log(chalk.gray(`✓ Found 1 match`));
+        }
       } else {
         // Multiple results - show interactive expandable selection
         const formatItem = (
@@ -1160,27 +1186,16 @@ queueCmd
       }
 
       // Add to queue
-      const result = await getClient().addToQueue([selectedItem.id], {
-        clearQueue: false,
-        playNow: false,
+      const outcome = await addQueueItem(
+        selectedItem.id,
+        options.loop === true,
+      );
+      completeQueueAdd(outcome, () => {
+        console.log(
+          chalk.green("✓ Added to queue:"),
+          chalk.bold(selectedItem.name),
+        );
       });
-
-      console.log(
-        chalk.green("✓ Added to queue:"),
-        chalk.bold(selectedItem.name),
-      );
-      console.log(
-        chalk.gray(
-          `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
-        ),
-      );
-      // Enable loop mode if --loop flag was passed
-      if (options.loop) {
-        const loopResult = await getClient().toggleLoop();
-        if (loopResult.loop) {
-          console.log(chalk.green("⟳ Loop enabled"));
-        }
-      }
     } catch (error) {
       if (isJsonMode()) {
         outputJsonError(error);
