@@ -39,7 +39,8 @@ function isProcessRunning(processId: number): boolean {
     process.kill(processId, 0);
     if (process.platform === "linux") {
       const processStat = readFileSync(`/proc/${processId}/stat`, "utf8");
-      const state = processStat.slice(processStat.lastIndexOf(")") + 2, -1)[0];
+      // Field 3 is the Linux process state; kill(pid, 0) still sees zombies.
+      const state = processStat.charAt(processStat.lastIndexOf(")") + 2);
       if (state === "Z") {
         return false;
       }

@@ -57,6 +57,11 @@ interface YouTubeServiceDependencies {
   executable: string;
 }
 
+interface ProcessExit {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+}
+
 export class YouTubeService {
   private readonly spawnProcess: YouTubeServiceDependencies["spawnProcess"];
   private readonly timeoutMs: number;
@@ -238,9 +243,7 @@ export class YouTubeService {
       let terminating = false;
       let timedOut = false;
       let sigkillSent = false;
-      let processExit:
-        | { exitCode: number | null; signal: NodeJS.Signals | null }
-        | undefined;
+      let processExit: ProcessExit | undefined;
       let processError: YouTubeError | undefined;
       let escalationTimer: ReturnType<typeof setTimeout> | undefined;
       let terminationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -264,16 +267,13 @@ export class YouTubeService {
         reject(error);
       };
 
-      const createTimeoutError = (
-        exitCode: number | null,
-        signal: NodeJS.Signals | null,
-      ): YouTubeError =>
+      const createTimeoutError = (exit: ProcessExit): YouTubeError =>
         new YouTubeError(`yt-dlp timed out after ${this.timeoutMs}ms`, {
           code: "TIMEOUT",
           operation,
           timeoutMs: this.timeoutMs,
-          exitCode,
-          signal,
+          exitCode: exit.exitCode,
+          signal: exit.signal,
         });
 
       const terminate = (): void => {
@@ -286,14 +286,17 @@ export class YouTubeService {
           sigkillSent = true;
           const escalationCause = this.signalProcessTree(proc, "SIGKILL");
           if (processExit) {
-            rejectOnce(
-              createTimeoutError(processExit.exitCode, processExit.signal),
-            );
+            rejectOnce(createTimeoutError(processExit));
             return;
           }
           terminationTimer = setTimeout(() => {
             if (proc.exitCode !== null || proc.signalCode !== null) {
-              rejectOnce(createTimeoutError(proc.exitCode, proc.signalCode));
+              rejectOnce(
+                createTimeoutError({
+                  exitCode: proc.exitCode,
+                  signal: proc.signalCode,
+                }),
+              );
               return;
             }
             rejectOnce(
@@ -327,7 +330,7 @@ export class YouTubeService {
           return;
         }
         // SIGKILL has reached the process group, and "exit" confirms the child ended.
-        rejectOnce(createTimeoutError(code, signal));
+        rejectOnce(createTimeoutError(processExit));
       });
 
       proc.on("close", (code, signal) => {
@@ -337,7 +340,7 @@ export class YouTubeService {
         if (timedOut) {
           processExit ??= { exitCode: code, signal };
           if (sigkillSent) {
-            rejectOnce(createTimeoutError(code, signal));
+            rejectOnce(createTimeoutError(processExit));
           }
           return;
         }
