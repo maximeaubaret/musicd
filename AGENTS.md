@@ -86,6 +86,7 @@ bun run cli <command>    # Run specific CLI commands (setup, browse, search, etc
 
 ```bash
 bun run format           # Format all files with Prettier
+bun run format:check     # Check formatting without modifying files
 bun run lint             # Lint all packages with ESLint
 bun run clean            # Clean dist and bin directories
 ```

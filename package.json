@@ -13,6 +13,7 @@
     "cli": "bun packages/cli/src/index.ts",
     "build:cli": "bun run --filter @musicd/cli build:cli",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint": "bun run --filter '*' lint",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf packages/*/dist bin/",
