@@ -244,7 +244,8 @@ All endpoints require `Authorization: Bearer <password>` header if `DAEMON_PASSW
 bun install          # Install dependencies
 bun run dev          # Start daemon with watch mode
 bun run cli <cmd>    # Run CLI commands
-bun run format       # Format code
+bun run format       # Format code in place
+bun run format:check # Check formatting without changing files
 bun run lint         # Lint code
 ````
 
