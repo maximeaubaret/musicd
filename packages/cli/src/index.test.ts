@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { stripVTControlCharacters } from "util";
 
 interface CliResult {
   exitCode: number;
@@ -12,6 +13,7 @@ interface CliResult {
 async function runCli(
   args: string[],
   environment: Record<string, string> = {},
+  input: string = "",
 ): Promise<CliResult> {
   const preloadPath = environment.MUSICD_CLI_EXPECTED_URL
     ? join(import.meta.dir, "connection-test-preload.ts")
@@ -28,10 +30,13 @@ async function runCli(
     ],
     {
       env: { ...process.env, NO_COLOR: "1", ...environment },
+      stdin: "pipe",
       stderr: "pipe",
       stdout: "pipe",
     },
   );
+  cliProcess.stdin.write(input);
+  cliProcess.stdin.end();
 
   const [exitCode, stderr, stdout] = await Promise.all([
     cliProcess.exited,
@@ -40,6 +45,10 @@ async function runCli(
   ]);
 
   return { exitCode, stderr, stdout };
+}
+
+function normalizeInteractiveOutput(output: string): string {
+  return stripVTControlCharacters(output).replaceAll(/\s+/g, " ").trim();
 }
 
 describe("CLI daemon transport", () => {
@@ -139,6 +148,79 @@ describe("CLI daemon transport", () => {
     expect(result.stderr).toContain("Insecure HTTP override enabled");
     expect(result.stderr).toContain("without transport encryption");
     expect(result.stdout).toContain("No playback in progress");
+  });
+});
+
+describe("CLI queue interaction", () => {
+  const queueScenario = { MUSICD_CLI_TEST_SCENARIO: "queue-interaction" };
+
+  test("default and explicit queue views present the same cancellable interaction", async () => {
+    const defaultResult = await runCli(["queue"], queueScenario, "q");
+    const showResult = await runCli(["queue", "show"], queueScenario, "q");
+    const defaultOutput = normalizeInteractiveOutput(defaultResult.stdout);
+    const showOutput = normalizeInteractiveOutput(showResult.stdout);
+
+    expect(defaultResult.exitCode).toBe(0);
+    expect(showResult.exitCode).toBe(0);
+    expect(defaultResult.stderr).toBe("");
+    expect(showResult.stderr).toBe("");
+    expect(defaultOutput).toBe(showOutput);
+    expect(defaultOutput).toContain("Queue (2 tracks) - Select track to play:");
+    expect(defaultOutput).toContain("1. · Current Track");
+    expect(defaultOutput).toContain("2. · YouTube Track");
+    expect(defaultOutput).toContain("[Jellyfin]");
+    expect(defaultOutput).toContain("[YouTube]");
+    expect(defaultOutput).toContain("Cancelled");
+  });
+
+  test("default and explicit queue views play the selected queue position", async () => {
+    for (const args of [["queue"], ["queue", "show"]]) {
+      const result = await runCli(args, queueScenario, "j\n");
+      const output = normalizeInteractiveOutput(result.stdout);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(output).toContain("Playing: YouTube Track");
+      expect(output).toContain("Queue: 2/2");
+    }
+  });
+
+  test("default and explicit queue JSON views emit one non-interactive value", async () => {
+    const defaultResult = await runCli(["--json", "queue"], queueScenario);
+    const showResult = await runCli(["--json", "queue", "show"], queueScenario);
+
+    expect(defaultResult.exitCode).toBe(0);
+    expect(showResult.exitCode).toBe(0);
+    expect(defaultResult.stderr).toBe("");
+    expect(showResult.stderr).toBe("");
+    expect(JSON.parse(defaultResult.stdout)).toEqual(
+      JSON.parse(showResult.stdout),
+    );
+    expect(JSON.parse(defaultResult.stdout)).toMatchObject({
+      success: true,
+      position: 0,
+      count: 2,
+    });
+    expect(defaultResult.stdout).not.toContain("Select track");
+    expect(showResult.stdout).not.toContain("Select track");
+  });
+
+  test("default and explicit queue JSON failures emit one JSON error", async () => {
+    const errorScenario = {
+      ...queueScenario,
+      MUSICD_CLI_TEST_QUEUE_ERROR: "1",
+    };
+
+    for (const args of [
+      ["--json", "queue"],
+      ["--json", "queue", "show"],
+    ]) {
+      const result = await runCli(args, errorScenario);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toEqual({ error: "Queue unavailable" });
+    }
   });
 });
 
