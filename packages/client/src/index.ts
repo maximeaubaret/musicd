@@ -1,4 +1,25 @@
+import type { ZodError, ZodType } from "zod";
+
 import { isCredentialKey } from "@musicd/shared";
+
+import {
+  ActionResponseSchema,
+  AlbumResponseSchema,
+  ArtistResponseSchema,
+  AuthResponseSchema,
+  DaemonErrorResponseSchema,
+  PlaybackActionResponseSchema,
+  PlaybackStatusSchema,
+  PlayQueueResponseSchema,
+  PlayResponseSchema,
+  QueueAddResponseSchema,
+  QueueModeResponseSchema,
+  QueueModeStatusResponseSchema,
+  QueueResponseSchema,
+  QueueShuffleResponseSchema,
+  QueueUpdateResponseSchema,
+  SearchResponseSchema,
+} from "./response-contracts";
 
 import type {
   ActionResponse,
@@ -7,6 +28,7 @@ import type {
   PlaybackActionResponse,
   QueueAddResponse,
   QueueResponse,
+  QueueUpdateResponse,
   PlayQueueResponse,
   SearchResponse,
   SearchResult,
@@ -27,6 +49,7 @@ export type {
   PlaybackActionResponse,
   QueueAddResponse,
   QueueResponse,
+  QueueUpdateResponse,
   PlayQueueResponse,
   SearchResponse,
   SearchResult,
@@ -65,6 +88,43 @@ export class InsecureDaemonConnectionError extends Error {
     );
     this.name = "InsecureDaemonConnectionError";
   }
+}
+
+/** Base error for failures reported by the daemon client. */
+export class DaemonClientError extends Error {
+  constructor(
+    message: string,
+    public endpoint: string,
+    public statusCode: number,
+  ) {
+    super(message);
+    this.name = "DaemonClientError";
+  }
+}
+
+/** Error raised when a daemon response does not match its endpoint contract. */
+export class DaemonResponseError extends DaemonClientError {
+  constructor(message: string, endpoint: string, statusCode: number) {
+    super(message, endpoint, statusCode);
+    this.name = "DaemonResponseError";
+  }
+}
+
+/** Error returned by a daemon after a valid request reaches the API. */
+export class DaemonRequestError extends DaemonClientError {
+  constructor(message: string, endpoint: string, statusCode: number) {
+    super(message, endpoint, statusCode);
+    this.name = "DaemonRequestError";
+  }
+}
+
+function describeValidationFailure(error: ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "response";
+      return `${path}: invalid value`;
+    })
+    .join(", ");
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -111,10 +171,12 @@ export class MusicDaemonClient {
    */
   private async request<T>(
     endpoint: string,
+    responseSchema: ZodType<T>,
     method: "GET" | "POST" = "GET",
     body?: unknown,
   ): Promise<T> {
     const url = `${this.baseUrl}/api${endpoint}`;
+    const requestTarget = `${method} /api${endpoint}`;
 
     try {
       const daemonUrl = new URL(this.baseUrl);
@@ -153,34 +215,59 @@ export class MusicDaemonClient {
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      const data = (await response.json()) as unknown;
       const duration = (performance.now() - startTime).toFixed(0);
 
       // Log the response
       this.logger?.debug(`  Response: ${response.status} (${duration}ms)`);
 
+      let data: unknown;
+      try {
+        data = (await response.json()) as unknown;
+      } catch {
+        const responseKind = response.ok ? "success" : "error";
+        throw new DaemonResponseError(
+          `Invalid daemon ${responseKind} response for ${requestTarget}: response: invalid JSON`,
+          requestTarget,
+          response.status,
+        );
+      }
+
       if (!response.ok) {
-        // Type guard for error responses
-        const errorMessage =
-          typeof data === "object" &&
-          data !== null &&
-          "error" in data &&
-          typeof data.error === "string"
-            ? data.error
-            : `Request failed with status ${response.status}`;
+        const errorResult = DaemonErrorResponseSchema.safeParse(data);
+        if (!errorResult.success) {
+          throw new DaemonResponseError(
+            `Invalid daemon error response for ${requestTarget}: ${describeValidationFailure(errorResult.error)}`,
+            requestTarget,
+            response.status,
+          );
+        }
+        const errorMessage = errorResult.data.error;
 
         // Special handling for 401 errors
         if (response.status === 401) {
-          throw new Error(
-            `Authentication failed: ${errorMessage === `Request failed with status ${response.status}` ? "Invalid or missing password" : errorMessage}. ` +
-              `Check DAEMON_PASSWORD in your config or environment.`,
+          throw new DaemonRequestError(
+            `Authentication failed: ${errorMessage}. Check DAEMON_PASSWORD in your config or environment.`,
+            requestTarget,
+            response.status,
           );
         }
 
-        throw new Error(errorMessage);
+        throw new DaemonRequestError(
+          errorMessage,
+          requestTarget,
+          response.status,
+        );
       }
 
-      return data as T;
+      const result = responseSchema.safeParse(data);
+      if (!result.success) {
+        throw new DaemonResponseError(
+          `Invalid daemon success response for ${requestTarget}: ${describeValidationFailure(result.error)}`,
+          requestTarget,
+          response.status,
+        );
+      }
+      return result.data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("fetch failed")) {
         this.logger?.debug(`  Error: Connection failed`);
@@ -188,7 +275,9 @@ export class MusicDaemonClient {
           `Cannot connect to daemon at ${this.baseUrl}. Is it running? Start it with: musicd-server`,
         );
       }
-      this.logger?.debug(`  Error: ${error}`);
+      this.logger?.debug(
+        `  Error: ${error instanceof Error ? error.name : "UnknownError"}`,
+      );
       throw error;
     }
   }
@@ -200,7 +289,10 @@ export class MusicDaemonClient {
     username: string,
     password: string,
   ): Promise<AuthResponse> {
-    return this.request("/auth", "POST", { username, password });
+    return this.request("/auth", AuthResponseSchema, "POST", {
+      username,
+      password,
+    });
   }
 
   /**
@@ -209,6 +301,7 @@ export class MusicDaemonClient {
   async search(query: string, limit = 20): Promise<SearchResponse> {
     return this.request(
       `/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+      SearchResponseSchema,
     );
   }
 
@@ -216,35 +309,35 @@ export class MusicDaemonClient {
    * Play a Jellyfin item
    */
   async play(itemId: string): Promise<PlayResponse> {
-    return this.request("/play", "POST", { itemId });
+    return this.request("/play", PlayResponseSchema, "POST", { itemId });
   }
 
   /**
    * Pause playback
    */
   async pause(): Promise<ActionResponse> {
-    return this.request("/pause", "POST");
+    return this.request("/pause", ActionResponseSchema, "POST");
   }
 
   /**
    * Resume playback
    */
   async resume(): Promise<ActionResponse> {
-    return this.request("/resume", "POST");
+    return this.request("/resume", ActionResponseSchema, "POST");
   }
 
   /**
    * Stop playback
    */
   async stop(): Promise<ActionResponse> {
-    return this.request("/stop", "POST");
+    return this.request("/stop", ActionResponseSchema, "POST");
   }
 
   /**
    * Get playback status
    */
   async status(): Promise<PlaybackStatus> {
-    return this.request("/status");
+    return this.request("/status", PlaybackStatusSchema);
   }
 
   /**
@@ -254,7 +347,7 @@ export class MusicDaemonClient {
     itemIds: string[],
     options?: QueueOptions,
   ): Promise<QueueAddResponse> {
-    return this.request("/queue/add", "POST", {
+    return this.request("/queue/add", QueueAddResponseSchema, "POST", {
       itemIds,
       clearQueue: options?.clearQueue,
       playNow: options?.playNow,
@@ -265,56 +358,68 @@ export class MusicDaemonClient {
    * Get current queue
    */
   async getQueue(): Promise<QueueResponse> {
-    return this.request("/queue");
+    return this.request("/queue", QueueResponseSchema);
   }
 
   /**
    * Clear the queue
    */
   async clearQueue(): Promise<ActionResponse> {
-    return this.request("/queue/clear", "POST");
+    return this.request("/queue/clear", ActionResponseSchema, "POST");
   }
 
   /**
    * Play next track
    */
   async playNext(): Promise<PlaybackActionResponse> {
-    return this.request("/queue/next", "POST");
+    return this.request("/queue/next", PlaybackActionResponseSchema, "POST");
   }
 
   /**
    * Play previous track
    */
   async playPrevious(): Promise<PlaybackActionResponse> {
-    return this.request("/queue/previous", "POST");
+    return this.request(
+      "/queue/previous",
+      PlaybackActionResponseSchema,
+      "POST",
+    );
   }
 
   /**
    * Play track from queue at specific index
    */
   async playFromQueue(index: number): Promise<PlayQueueResponse> {
-    return this.request(`/queue/play/${index}`, "POST");
+    return this.request(
+      `/queue/play/${index}`,
+      PlayQueueResponseSchema,
+      "POST",
+    );
   }
 
   /**
    * Remove track from queue at specific index
    */
-  async removeFromQueue(index: number): Promise<QueueResponse> {
-    return this.request(`/queue/remove/${index}`, "POST");
+  async removeFromQueue(index: number): Promise<QueueUpdateResponse> {
+    return this.request(
+      `/queue/remove/${index}`,
+      QueueUpdateResponseSchema,
+      "POST",
+    );
   }
 
   /**
    * Toggle loop mode
    */
   async toggleLoop(): Promise<QueueModeResponse> {
-    return this.request("/queue/loop", "POST");
+    return this.request("/queue/loop", QueueModeResponseSchema, "POST");
   }
 
   /**
    * Toggle random mode
    */
   async toggleRandom(): Promise<QueueModeResponse> {
-    return this.request("/queue/random", "POST");
+    return this.request("/queue/random", QueueModeResponseSchema, "POST");
   }
 
   /**
@@ -322,7 +427,12 @@ export class MusicDaemonClient {
    */
   async setQueueMode(mode: Partial<QueueMode>): Promise<QueueModeResponse> {
     try {
-      return await this.request("/queue/mode", "POST", mode);
+      return await this.request(
+        "/queue/mode",
+        QueueModeResponseSchema,
+        "POST",
+        mode,
+      );
     } catch (error) {
       if (error instanceof Error) {
         throw error;
@@ -335,27 +445,27 @@ export class MusicDaemonClient {
    * Shuffle the queue order
    */
   async shuffleQueue(): Promise<QueueResponse> {
-    return this.request("/queue/shuffle", "POST");
+    return this.request("/queue/shuffle", QueueShuffleResponseSchema, "POST");
   }
 
   /**
    * Get current queue mode settings
    */
   async getQueueMode(): Promise<QueueModeStatusResponse> {
-    return this.request("/queue/mode");
+    return this.request("/queue/mode", QueueModeStatusResponseSchema);
   }
 
   /**
    * Get album details with tracks
    */
   async getAlbum(albumId: string): Promise<AlbumResponse> {
-    return this.request(`/album/${albumId}`);
+    return this.request(`/album/${albumId}`, AlbumResponseSchema);
   }
 
   /**
    * Get artist details with tracks
    */
   async getArtist(artistId: string): Promise<ArtistResponse> {
-    return this.request(`/artist/${artistId}`);
+    return this.request(`/artist/${artistId}`, ArtistResponseSchema);
   }
 }

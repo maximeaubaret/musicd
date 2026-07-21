@@ -1,11 +1,121 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
-import { MusicDaemonClient } from "./index";
+import {
+  DaemonRequestError,
+  DaemonResponseError,
+  MusicDaemonClient,
+} from "./index";
 
 const originalFetch = globalThis.fetch;
+const stoppedStatus = {
+  state: "stopped",
+  currentItem: null,
+  position: 0,
+  duration: 0,
+  queue: [],
+  queuePosition: -1,
+  queueMode: { loop: false, random: false },
+};
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe("MusicDaemonClient response validation", () => {
+  test("rejects malformed successful status responses with a typed redacted error", async () => {
+    const fetchMock = mock(async () =>
+      Response.json({
+        state: "buffering",
+        accessToken: "daemon-token-DO-NOT-LOG",
+      }),
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    try {
+      await client.status();
+      throw new Error("Expected status validation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DaemonResponseError);
+      expect(String(error)).toContain("GET /api/status");
+      expect(String(error)).toContain("state");
+      expect(String(error)).not.toContain("daemon-token-DO-NOT-LOG");
+    }
+  });
+
+  test("rejects malformed daemon error responses with a typed redacted error", async () => {
+    const fetchMock = mock(async () =>
+      Response.json(
+        {
+          success: false,
+          error: 42,
+          password: "daemon-password-DO-NOT-LOG",
+        },
+        { status: 500 },
+      ),
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    try {
+      await client.status();
+      throw new Error("Expected error response validation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DaemonResponseError);
+      expect(String(error)).toContain("daemon error response");
+      expect(String(error)).toContain("GET /api/status");
+      expect(String(error)).toContain("error");
+      expect(String(error)).not.toContain("daemon-password-DO-NOT-LOG");
+    }
+  });
+
+  test("uses the search endpoint contract for successful responses", async () => {
+    const fetchMock = mock(async () =>
+      Response.json({
+        success: true,
+        query: "miles",
+        count: 1,
+        results: [{ id: "track-1", name: "So What" }],
+      }),
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    await expect(client.search("miles")).rejects.toThrow(
+      "results.0.type: invalid value",
+    );
+  });
+
+  test("returns valid daemon failures as typed request errors", async () => {
+    const fetchMock = mock(async () =>
+      Response.json(
+        { success: false, error: "Track was not found" },
+        { status: 404 },
+      ),
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    try {
+      await client.play("missing-track");
+      throw new Error("Expected daemon request to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DaemonRequestError);
+      expect(error).toMatchObject({
+        endpoint: "POST /api/play",
+        statusCode: 404,
+        message: "Track was not found",
+      });
+    }
+  });
 });
 
 describe("MusicDaemonClient transport security", () => {
@@ -50,7 +160,7 @@ describe("MusicDaemonClient transport security", () => {
           input instanceof Request
             ? new Request(input, init)
             : new Request(input.toString(), init);
-        return Response.json({ state: "stopped" });
+        return Response.json(stoppedStatus);
       },
     );
     globalThis.fetch = Object.assign(fetchMock, {
@@ -71,7 +181,7 @@ describe("MusicDaemonClient transport security", () => {
     const requestedUrls: string[] = [];
     const fetchMock = mock(async (input: string | URL | Request) => {
       requestedUrls.push(input.toString());
-      return Response.json({ state: "stopped" });
+      return Response.json(stoppedStatus);
     });
     globalThis.fetch = Object.assign(fetchMock, {
       preconnect: originalFetch.preconnect,
@@ -96,7 +206,7 @@ describe("MusicDaemonClient transport security", () => {
     let requestSent = false;
     const fetchMock = mock(async () => {
       requestSent = true;
-      return Response.json({ state: "stopped" });
+      return Response.json(stoppedStatus);
     });
     globalThis.fetch = Object.assign(fetchMock, {
       preconnect: originalFetch.preconnect,
@@ -121,7 +231,7 @@ describe("MusicDaemonClient transport security", () => {
             ? new Request(input, init)
             : new Request(input.toString(), init);
         requests.push(request);
-        return Response.json({ state: "stopped" });
+        return Response.json(stoppedStatus);
       },
     );
     globalThis.fetch = Object.assign(fetchMock, {

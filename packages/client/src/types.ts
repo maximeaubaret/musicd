@@ -1,4 +1,9 @@
-import type { PlaybackStatus, QueueItem, QueueMode } from "@musicd/shared";
+import type {
+  PlaybackState,
+  PlaybackStatus,
+  QueueItem,
+  QueueMode,
+} from "@musicd/shared";
 
 export interface AuthResponse {
   success: boolean;
@@ -8,7 +13,7 @@ export interface AuthResponse {
   };
 }
 
-export interface PlayResponse {
+export interface DirectPlayResponse {
   success: boolean;
   message: string;
   item: {
@@ -16,8 +21,18 @@ export interface PlayResponse {
     name: string;
     artist?: string;
     album?: string;
+    source?: "jellyfin" | "youtube";
   };
 }
+
+export interface SmartPlayResponse {
+  success: boolean;
+  message: string;
+  state: PlaybackState;
+  currentItem: PlaybackStatus["currentItem"];
+}
+
+export type PlayResponse = DirectPlayResponse | SmartPlayResponse;
 
 export interface QueueAddResponse {
   success: boolean;
@@ -31,6 +46,13 @@ export interface QueueResponse {
   queue: QueueItem[];
   position: number;
   count: number;
+}
+
+export interface QueueUpdateResponse {
+  success: boolean;
+  message: string;
+  queue: QueueItem[];
+  position: number;
 }
 
 export interface PlayQueueResponse {
@@ -111,7 +133,7 @@ export interface ActionResponse {
 export interface PlaybackActionResponse {
   success: boolean;
   message: string;
-  state: string;
+  state: PlaybackState;
   currentItem: {
     id: string;
     name: string;
