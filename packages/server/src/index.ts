@@ -99,15 +99,17 @@ async function main() {
   }
 
   // Register stream URL resolvers for each source type
-  playerService.registerStreamUrlResolver("jellyfin", (item) => {
-    return jellyfinService.getStreamUrl(item.id);
+  playerService.registerPlaybackSourceResolver("jellyfin", (item) => {
+    return jellyfinService.getPlaybackSource(item.id);
   });
 
-  playerService.registerStreamUrlResolver("youtube", (item) => {
+  playerService.registerPlaybackSourceResolver("youtube", (item) => {
     if (item.source !== "youtube") {
       throw new Error("Expected youtube source");
     }
-    return youtubeService.getStreamUrl(item.youtubeUrl);
+    return youtubeService
+      .getStreamUrl(item.youtubeUrl)
+      .then((url) => ({ url }));
   });
 
   // Configure player service with playback reporter for Jellyfin play tracking

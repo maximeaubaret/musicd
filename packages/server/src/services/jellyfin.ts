@@ -2,6 +2,7 @@ import type {
   JellyfinConfig,
   JellyfinItem,
   AuthenticationResult,
+  StoredAuth,
 } from "@musicd/shared";
 import {
   JellyfinError,
@@ -10,6 +11,8 @@ import {
   getAuthFilePath,
 } from "@musicd/shared";
 import { logger } from "../logger";
+
+import type { PlaybackSource } from "./playback/backend";
 
 // Jellyfin API response types
 interface JellyfinSearchHint {
@@ -38,11 +41,14 @@ export class JellyfinService {
   private deviceId: string =
     "music-daemon-" + Math.random().toString(36).substring(7);
 
-  constructor(config: JellyfinConfig) {
+  constructor(
+    config: JellyfinConfig,
+    authLoader: () => StoredAuth | null = loadAuth,
+  ) {
     this.config = config;
 
     // Try to load stored authentication
-    const storedAuth = loadAuth();
+    const storedAuth = authLoader();
     if (storedAuth) {
       this.accessToken = storedAuth.accessToken;
       this.userId = storedAuth.userId;
@@ -470,9 +476,9 @@ export class JellyfinService {
   }
 
   /**
-   * Get direct stream URL for an item
+   * Get the authenticated playback source for an item
    */
-  async getStreamUrl(itemId: string): Promise<string> {
+  async getPlaybackSource(itemId: string): Promise<PlaybackSource> {
     // Ensure we're authenticated
     if (!this.isAuthenticated()) {
       throw new JellyfinError(
@@ -484,10 +490,32 @@ export class JellyfinService {
     // Verify item exists first
     await this.getItem(itemId);
 
-    // Build stream URL with access token
-    const streamUrl = `${this.config.serverUrl}/Audio/${itemId}/universal?UserId=${this.userId}&DeviceId=${this.deviceId}&MaxStreamingBitrate=140000000&Container=opus,mp3,aac,m4a,m4b,flac,wav,ogg&TranscodingContainer=aac&TranscodingProtocol=hls&AudioCodec=aac&api_key=${this.accessToken}`;
+    const accessToken = this.accessToken;
+    if (!accessToken) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
 
-    return streamUrl;
+    const streamUrl = new URL(
+      `/Audio/${itemId}/universal`,
+      this.config.serverUrl,
+    );
+    streamUrl.search = new URLSearchParams({
+      UserId: this.userId ?? "",
+      DeviceId: this.deviceId,
+      MaxStreamingBitrate: "140000000",
+      Container: "opus,mp3,aac,m4a,m4b,flac,wav,ogg",
+      TranscodingContainer: "aac",
+      TranscodingProtocol: "http",
+      AudioCodec: "aac",
+    }).toString();
+
+    return {
+      url: streamUrl.toString(),
+      headers: { "X-MediaBrowser-Token": accessToken },
+    };
   }
 
   /**

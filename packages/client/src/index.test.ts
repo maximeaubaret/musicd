@@ -9,6 +9,39 @@ afterEach(() => {
 });
 
 describe("MusicDaemonClient transport security", () => {
+  test("debug logs keep request context without authentication secrets", async () => {
+    const messages: string[] = [];
+    const fetchMock = mock(async () =>
+      Response.json({
+        success: true,
+        user: { id: "user-1", name: "listener" },
+      }),
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient(
+      "https://music.example.com",
+      "daemon-password-DO-NOT-LOG",
+      {
+        logger: {
+          debug: (...args: unknown[]) => {
+            messages.push(args.map(String).join(" "));
+          },
+        },
+      },
+    );
+
+    await client.authenticate("listener", "jellyfin-password-DO-NOT-LOG");
+
+    const output = messages.join("\n");
+    expect(output).toContain("POST https://music.example.com/api/auth");
+    expect(output).toContain('"username":"listener"');
+    expect(output).toMatch(/Response: 200 \(\d+ms\)/);
+    expect(output).not.toContain("daemon-password-DO-NOT-LOG");
+    expect(output).not.toContain("jellyfin-password-DO-NOT-LOG");
+  });
+
   test("sends password-bearing remote requests over HTTPS", async () => {
     let request: Request | undefined;
     const fetchMock = mock(

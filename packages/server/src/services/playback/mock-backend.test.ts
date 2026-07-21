@@ -9,7 +9,7 @@ describe("MockBackend", () => {
     backend.onComplete((position) => {
       completedAt = position;
     });
-    await backend.play("https://example.test/audio");
+    await backend.play({ url: "https://example.test/audio" });
     backend.setPosition(37);
 
     await backend.simulateComplete();
@@ -26,7 +26,7 @@ describe("MockBackend", () => {
     backend.onError((_error, position) => {
       failedAt = position;
     });
-    await backend.play("https://example.test/audio");
+    await backend.play({ url: "https://example.test/audio" });
     backend.setPosition(19);
 
     await backend.simulateError(new Error("decoder failed"));
@@ -46,7 +46,7 @@ describe("MockBackend", () => {
     backend.onError(() => {
       terminalEvents.push("error");
     });
-    await backend.play("https://example.test/audio");
+    await backend.play({ url: "https://example.test/audio" });
 
     await backend.simulateError(new Error("decoder failed"));
     await backend.simulateComplete();

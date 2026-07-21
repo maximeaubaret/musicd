@@ -64,9 +64,9 @@ describe("PlayerService", () => {
 
     // Set up mock stream URL resolver (receives full QueueItem)
     streamUrlGetterMock = mock(async (item: { id: string }) => {
-      return `http://test.local/stream/${item.id}`;
+      return { url: `http://test.local/stream/${item.id}` };
     });
-    player.registerStreamUrlResolver("jellyfin", streamUrlGetterMock);
+    player.registerPlaybackSourceResolver("jellyfin", streamUrlGetterMock);
 
     // Set up mock playback reporter
     reportStartMock = mock(async () => {});
@@ -867,9 +867,9 @@ describe("PlayerService", () => {
 
     beforeEach(() => {
       youtubeResolverMock = mock(async (item: { id: string }) => {
-        return `https://cdn.youtube.com/stream/${item.id}`;
+        return { url: `https://cdn.youtube.com/stream/${item.id}` };
       });
-      player.registerStreamUrlResolver("youtube", youtubeResolverMock);
+      player.registerPlaybackSourceResolver("youtube", youtubeResolverMock);
     });
 
     test("adds YouTube items via addItems()", () => {
@@ -929,13 +929,16 @@ describe("PlayerService", () => {
       // Create a player without the youtube resolver
       const freshBackend = new MockBackend();
       const freshPlayer = new PlayerService(freshBackend);
-      freshPlayer.registerStreamUrlResolver("jellyfin", streamUrlGetterMock);
+      freshPlayer.registerPlaybackSourceResolver(
+        "jellyfin",
+        streamUrlGetterMock,
+      );
 
       const ytItem = createMockYouTubeItem("abc123", "YouTube Song");
       freshPlayer.addItems([ytItem]);
 
       await expect(freshPlayer.playFromQueue(0)).rejects.toThrow(
-        "No stream URL resolver registered for source: youtube",
+        "No playback source resolver registered for source: youtube",
       );
     });
 
@@ -956,9 +959,9 @@ describe("PlayerService", () => {
 
     beforeEach(() => {
       youtubeResolverMock = mock(async (item: { id: string }) => {
-        return `https://cdn.youtube.com/stream/${item.id}`;
+        return { url: `https://cdn.youtube.com/stream/${item.id}` };
       });
-      player.registerStreamUrlResolver("youtube", youtubeResolverMock);
+      player.registerPlaybackSourceResolver("youtube", youtubeResolverMock);
     });
 
     test("queue contains both sources", () => {

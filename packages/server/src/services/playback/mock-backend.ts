@@ -1,4 +1,4 @@
-import type { PlaybackBackend } from "./backend";
+import type { PlaybackBackend, PlaybackSource } from "./backend";
 
 /**
  * Mock backend for testing
@@ -18,7 +18,7 @@ export class MockBackend implements PlaybackBackend {
   /**
    * Start playing (synchronous, no delays)
    */
-  async play(_url: string): Promise<void> {
+  async play(_source: PlaybackSource): Promise<void> {
     this._isPlaying = true;
     this._isPaused = false;
     this._position = 0;

@@ -198,8 +198,8 @@ Connection profiles for the CLI:
 
 musicd status
 musicd --profile home-server status
-musicd --protocol https --host music.example.com --port 443 --password secret status
-musicd --host 10.0.0.5 --password secret --allow-insecure-http status
+musicd --protocol https --host music.example.com --port 443 status
+musicd --host 10.0.0.5 --allow-insecure-http status
 
 # JSON output for scripting
 
@@ -239,6 +239,20 @@ HTTPS reverse proxy by setting `protocol` in a profile, `DAEMON_PROTOCOL=https`,
 or `--protocol https`. For an intentionally trusted network, set
 `allowInsecureHttp`, `DAEMON_ALLOW_INSECURE_HTTP=true`, or
 `--allow-insecure-http`; the CLI prints a warning whenever this exception is used.
+
+Debug logging redacts daemon passwords, Jellyfin passwords and tokens, and
+credential-bearing query parameters while retaining request method, path, status,
+and timing context. Jellyfin playback is fetched by the daemon with the token in
+an HTTP header and piped to ffplay, so the token is not present in ffplay's
+command line. The token must still remain in the daemon's memory for the
+authenticated session and in outbound request metadata; a local administrator or
+debugger with access to the daemon process can inspect it. Use HTTPS for remote
+Jellyfin servers and restrict access to the daemon account.
+
+Prefer a password stored in a CLI profile over `--password`: command-line
+arguments may be visible to other local process-inspection tools. Environment
+variables avoid command-line exposure but may still be inspectable by sufficiently
+privileged local users.
 
 ## REST API
 
