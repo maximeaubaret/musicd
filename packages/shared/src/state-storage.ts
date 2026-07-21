@@ -8,7 +8,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import type { QueueItem, JellyfinItem } from "./types";
+import type { QueueItem, JellyfinItem, QueueMode } from "./types";
 import { XDG_DATA_DIR, XDG_QUEUE_FILE } from "./constants";
 
 /**
@@ -30,19 +30,25 @@ export function getQueueFilePath(): string {
 export interface QueueState {
   queue: QueueItem[];
   queuePosition: number;
+  queueMode: QueueMode;
   savedAt: number;
   version: number;
 }
 
-const CURRENT_STATE_VERSION = 2;
+const CURRENT_STATE_VERSION = 3;
 
 /**
  * Save queue state to disk
  */
-export function saveQueueState(queue: QueueItem[], position: number): void {
+export function saveQueueState(
+  queue: QueueItem[],
+  position: number,
+  queueMode: QueueMode = { loop: false, random: false },
+): void {
   const data: QueueState = {
     queue,
     queuePosition: position,
+    queueMode,
     savedAt: Date.now(),
     version: CURRENT_STATE_VERSION,
   };
@@ -53,7 +59,6 @@ export function saveQueueState(queue: QueueItem[], position: number): void {
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true });
     }
-
     const queuePath = getQueueFilePath();
     writeFileSync(queuePath, JSON.stringify(data, null, 2), "utf-8");
     // Set file permissions to 600 (owner read/write only) for security
@@ -88,6 +93,25 @@ function migrateV1toV2(parsed: {
   return {
     queue: migratedQueue,
     queuePosition: parsed.queuePosition,
+    queueMode: { loop: false, random: false },
+    savedAt: parsed.savedAt,
+    version: CURRENT_STATE_VERSION,
+  };
+}
+
+/**
+ * Migrate v2 queue state to v3 by adding queueMode field.
+ */
+function migrateV2toV3(parsed: {
+  queue: QueueItem[];
+  queuePosition: number;
+  savedAt: number;
+  version: number;
+}): QueueState {
+  return {
+    queue: parsed.queue,
+    queuePosition: parsed.queuePosition,
+    queueMode: { loop: false, random: false },
     savedAt: parsed.savedAt,
     version: CURRENT_STATE_VERSION,
   };
@@ -120,18 +144,29 @@ export function loadQueueState(): QueueState | null {
       return null;
     }
 
-    // Migrate v1 -> v2: add source: "jellyfin" to all items
+    // Migrate v1 -> v2 -> v3: add source: "jellyfin" to all items, then add queueMode
     if (parsed.version === 1) {
       const migrated = migrateV1toV2(parsed);
       // Re-save with new version
       try {
-        saveQueueState(migrated.queue, migrated.queuePosition);
+        saveQueueState(migrated.queue, migrated.queuePosition, migrated.queueMode);
       } catch {
         // Non-fatal: migration still works in memory even if re-save fails
       }
       return migrated;
     }
 
+    // Migrate v2 -> v3: add queueMode field
+    if (parsed.version === 2) {
+      const migrated = migrateV2toV3(parsed);
+      // Re-save with new version
+      try {
+        saveQueueState(migrated.queue, migrated.queuePosition, migrated.queueMode);
+      } catch {
+        // Non-fatal: migration still works in memory even if re-save fails
+      }
+      return migrated;
+    }
     return parsed as QueueState;
   } catch (error) {
     console.warn("Failed to load queue state:", error);

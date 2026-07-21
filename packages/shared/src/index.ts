@@ -15,6 +15,7 @@ export type {
   JellyfinItem,
   MediaSource,
   PlaybackState,
+  QueueMode,
   QueueItemBase,
   JellyfinQueueItem,
   YouTubeQueueItem,

@@ -555,6 +555,32 @@ program
             ),
           );
         }
+
+        // Show queue mode if loop or random is enabled
+        const modes: string[] = [];
+        if (status.queueMode?.loop) {
+          modes.push("⟳ loop");
+        }
+        if (status.queueMode?.random) {
+          modes.push("🔀 random");
+        }
+        if (modes.length > 0) {
+          console.log(chalk.gray(`  Mode: ${modes.join(", ")}`));
+        }
+      }
+
+      // Also show mode when stopped but modes are enabled
+      if (status.state === "stopped" && status.queueMode) {
+        const modes: string[] = [];
+        if (status.queueMode.loop) {
+          modes.push("⟳ loop");
+        }
+        if (status.queueMode.random) {
+          modes.push("🔀 random");
+        }
+        if (modes.length > 0) {
+          console.log(chalk.gray(`Mode: ${modes.join(", ")}`));
+        }
       }
     } catch (error) {
       if (isJsonMode()) {
@@ -794,11 +820,98 @@ queueCmd
   });
 
 queueCmd
+  .command("loop")
+  .description(
+    "Toggle queue loop mode (replay from beginning when reaching end)",
+  )
+  .action(async () => {
+    try {
+      const result = await getClient().toggleLoop();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      if (result.loop) {
+        console.log(
+          chalk.green("⟳ Loop enabled") + chalk.gray(" - Queue will repeat"),
+        );
+      } else {
+        console.log(chalk.yellow("⟳ Loop disabled"));
+      }
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to toggle loop:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+queueCmd
+  .command("random")
+  .description(
+    "Toggle random mode (pick random next track instead of sequential)",
+  )
+  .action(async () => {
+    try {
+      const result = await getClient().toggleRandom();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      if (result.random) {
+        console.log(
+          chalk.green("🔀 Random enabled") +
+            chalk.gray(" - Playing in random order"),
+        );
+      } else {
+        console.log(chalk.yellow("🔀 Random disabled"));
+      }
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to toggle random:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+queueCmd
+  .command("shuffle")
+  .description("Shuffle the current queue order randomly")
+  .action(async () => {
+    try {
+      const result = await getClient().shuffleQueue();
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      console.log(
+        chalk.green("✓ Queue shuffled"),
+        chalk.gray(`(${result.count} track${result.count === 1 ? "" : "s"})`),
+      );
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to shuffle queue:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+queueCmd
   .command("add")
   .description("Add to queue by search query, Jellyfin ID, or YouTube URL")
   .argument("[query]", "Search query or YouTube URL")
   .option("-i, --id <itemId>", "Add by Jellyfin item ID")
   .option("--youtube-url <url>", "Add a YouTube URL to the queue")
+  .option("--loop", "Enable loop mode after adding")
   .action(async (query: string | undefined, options) => {
     try {
       // Validate that at least one source is provided
@@ -844,6 +957,13 @@ queueCmd
             `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
           ),
         );
+        // Enable loop mode if --loop flag was passed
+        if (options.loop) {
+          const loopResult = await getClient().toggleLoop();
+          if (loopResult.loop) {
+            console.log(chalk.green("⟳ Loop enabled"));
+          }
+        }
         return;
       }
 
@@ -867,6 +987,13 @@ queueCmd
             `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
           ),
         );
+        // Enable loop mode if --loop flag was passed
+        if (options.loop) {
+          const loopResult = await getClient().toggleLoop();
+          if (loopResult.loop) {
+            console.log(chalk.green("⟳ Loop enabled"));
+          }
+        }
         return;
       }
 
@@ -897,6 +1024,13 @@ queueCmd
             `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
           ),
         );
+        // Enable loop mode if --loop flag was passed
+        if (options.loop) {
+          const loopResult = await getClient().toggleLoop();
+          if (loopResult.loop) {
+            console.log(chalk.green("⟳ Loop enabled"));
+          }
+        }
         return;
       }
 
@@ -1021,6 +1155,13 @@ queueCmd
           `  Added ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
         ),
       );
+      // Enable loop mode if --loop flag was passed
+      if (options.loop) {
+        const loopResult = await getClient().toggleLoop();
+        if (loopResult.loop) {
+          console.log(chalk.green("⟳ Loop enabled"));
+        }
+      }
     } catch (error) {
       if (isJsonMode()) {
         outputJsonError(error);

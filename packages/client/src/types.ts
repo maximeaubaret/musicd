@@ -1,4 +1,4 @@
-import type { PlaybackStatus, QueueItem } from "@musicd/shared";
+import type { PlaybackStatus, QueueItem, QueueMode } from "@musicd/shared";
 
 export interface AuthResponse {
   success: boolean;
@@ -120,4 +120,13 @@ export interface PlaybackActionResponse {
   } | null;
 }
 
-export { PlaybackStatus };
+/** Response from POST /queue/loop, /queue/random */
+export interface QueueModeResponse {
+  success: boolean;
+  message: string;
+  loop?: boolean;
+  random?: boolean;
+  queueMode: QueueMode;
+}
+
+export { PlaybackStatus, QueueMode };

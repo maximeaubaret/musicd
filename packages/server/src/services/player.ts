@@ -3,6 +3,7 @@ import type {
   JellyfinItem,
   QueueItem,
   JellyfinQueueItem,
+  QueueMode,
 } from "@musicd/shared";
 import { PlayerError } from "@musicd/shared";
 import type { PlaybackBackend } from "./playback/backend";
@@ -31,6 +32,7 @@ export class PlayerService {
     ) => Promise<void>;
   } | null = null;
   private stateSaveEnabled: boolean = false;
+  private queueMode: QueueMode = { loop: false, random: false };
   private stateSaveCallback: (() => void) | null = null;
 
   constructor(private backend: PlaybackBackend) {
@@ -38,8 +40,8 @@ export class PlayerService {
     this.backend.onComplete(async () => {
       this.cleanup();
 
-      // Auto-advance to next track if available
-      if (this.hasNext()) {
+      // Auto-advance to next track based on queue mode
+      if (this.hasNext() || this.queueMode.loop || this.queueMode.random) {
         try {
           await this.playNext();
         } catch (error) {
@@ -96,19 +98,31 @@ export class PlayerService {
   /**
    * Get current queue state for persistence
    */
-  getQueueState(): { queue: QueueItem[]; position: number } {
+  getQueueState(): {
+    queue: QueueItem[];
+    position: number;
+    queueMode: QueueMode;
+  } {
     return {
       queue: [...this.queue],
       position: this.queuePosition,
+      queueMode: { ...this.queueMode },
     };
   }
 
   /**
    * Restore queue state (does NOT start playback)
    */
-  restoreQueueState(state: { queue: QueueItem[]; position: number }): void {
+  restoreQueueState(state: {
+    queue: QueueItem[];
+    position: number;
+    queueMode?: QueueMode;
+  }): void {
     this.queue = [...state.queue];
     this.queuePosition = state.position;
+    if (state.queueMode) {
+      this.queueMode = { ...state.queueMode };
+    }
   }
 
   /**
@@ -265,18 +279,44 @@ export class PlayerService {
 
   /**
    * Play next song in queue
-   * - If at end of queue: stops playback
-   * - Otherwise: advances to next track and plays
+   * Respects queue mode settings:
+   * - random: picks a random track from the queue
+   * - loop: wraps to beginning when reaching end
+   * - If neither and at end of queue: stops playback
    */
   async playNext(): Promise<void> {
-    // If at end of queue, stop
+    if (this.queue.length === 0) {
+      return;
+    }
+
+    // Random mode: pick a random track (different from current if possible)
+    if (this.queueMode.random) {
+      let nextPosition: number;
+      if (this.queue.length === 1) {
+        nextPosition = 0;
+      } else {
+        // Pick a random position different from current
+        do {
+          nextPosition = Math.floor(Math.random() * this.queue.length);
+        } while (nextPosition === this.queuePosition);
+      }
+      await this.playFromQueue(nextPosition);
+      return;
+    }
+
+    // Sequential mode: check if at end of queue
     if (this.queuePosition >= this.queue.length - 1) {
+      // Loop mode: wrap to beginning
+      if (this.queueMode.loop) {
+        await this.playFromQueue(0);
+        return;
+      }
+      // No loop: stop playback
       if (this.backend.isPlaying()) {
         await this.stop();
       }
       return;
     }
-
     // Otherwise advance and play
     await this.playFromQueue(this.queuePosition + 1);
   }
@@ -343,6 +383,82 @@ export class PlayerService {
    */
   getQueuePosition(): number {
     return this.queuePosition;
+  }
+
+  /**
+   * Get current queue mode
+   */
+  getQueueMode(): QueueMode {
+    return { ...this.queueMode };
+  }
+
+  /**
+   * Set queue mode settings
+   */
+  setQueueMode(mode: Partial<QueueMode>): void {
+    if (mode.loop !== undefined) {
+      this.queueMode.loop = mode.loop;
+    }
+    if (mode.random !== undefined) {
+      this.queueMode.random = mode.random;
+    }
+    this.triggerStateSave();
+  }
+
+  /**
+   * Toggle loop mode on/off
+   * @returns The new loop state
+   */
+  toggleLoop(): boolean {
+    this.queueMode.loop = !this.queueMode.loop;
+    this.triggerStateSave();
+    return this.queueMode.loop;
+  }
+
+  /**
+   * Toggle random mode on/off
+   * @returns The new random state
+   */
+  toggleRandom(): boolean {
+    this.queueMode.random = !this.queueMode.random;
+    this.triggerStateSave();
+    return this.queueMode.random;
+  }
+
+  /**
+   * Shuffle the queue order randomly.
+   * The current track stays in place if playing, but the rest are shuffled.
+   */
+  shuffleQueue(): void {
+    if (this.queue.length <= 1) {
+      return;
+    }
+
+    // If currently playing, keep the current track in place
+    if (this.backend.isPlaying() && this.queuePosition >= 0) {
+      const currentItem = this.queue[this.queuePosition];
+      const otherItems = this.queue.filter((_, i) => i !== this.queuePosition);
+
+      // Fisher-Yates shuffle for the other items
+      for (let i = otherItems.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [otherItems[i], otherItems[j]] = [otherItems[j], otherItems[i]];
+      }
+
+      // Reconstruct queue with current track at position 0
+      this.queue = [currentItem, ...otherItems];
+      this.queuePosition = 0;
+    } else {
+      // Not playing: shuffle entire queue
+      for (let i = this.queue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
+      }
+      // Reset position to beginning
+      this.queuePosition = this.queue.length > 0 ? 0 : -1;
+    }
+
+    this.triggerStateSave();
   }
 
   /**
@@ -455,6 +571,7 @@ export class PlayerService {
         duration: 0,
         queue: this.queue,
         queuePosition: this.queuePosition,
+        queueMode: { ...this.queueMode },
       };
     }
 
@@ -476,6 +593,7 @@ export class PlayerService {
       duration,
       queue: this.queue,
       queuePosition: this.queuePosition,
+      queueMode: { ...this.queueMode },
     };
   }
 

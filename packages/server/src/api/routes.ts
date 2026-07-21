@@ -836,6 +836,104 @@ export function createApiRoutes(
   });
 
   /**
+   * POST /api/queue/loop - Toggle loop mode
+   */
+  app.post("/queue/loop", async (c) => {
+    try {
+      const newState = playerService.toggleLoop();
+      return c.json({
+        success: true,
+        message: newState ? "Loop enabled" : "Loop disabled",
+        loop: newState,
+        queueMode: playerService.getQueueMode(),
+      });
+    } catch (error) {
+      console.error("Error toggling loop:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to toggle loop mode",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * POST /api/queue/random - Toggle random mode
+   */
+  app.post("/queue/random", async (c) => {
+    try {
+      const newState = playerService.toggleRandom();
+      return c.json({
+        success: true,
+        message: newState ? "Random enabled" : "Random disabled",
+        random: newState,
+        queueMode: playerService.getQueueMode(),
+      });
+    } catch (error) {
+      console.error("Error toggling random:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to toggle random mode",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * POST /api/queue/shuffle - Shuffle the queue order
+   */
+  app.post("/queue/shuffle", async (c) => {
+    try {
+      playerService.shuffleQueue();
+      const queue = playerService.getQueue();
+      const position = playerService.getQueuePosition();
+
+      return c.json({
+        success: true,
+        message: "Queue shuffled",
+        queue,
+        position,
+        count: queue.length,
+      });
+    } catch (error) {
+      console.error("Error shuffling queue:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to shuffle queue",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /api/queue/mode - Get current queue mode settings
+   */
+  app.get("/queue/mode", async (c) => {
+    try {
+      const queueMode = playerService.getQueueMode();
+      return c.json({
+        success: true,
+        queueMode,
+      });
+    } catch (error) {
+      console.error("Error getting queue mode:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to get queue mode",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
    * GET /api/search - Search for music items
    */
   app.get("/search", async (c) => {
@@ -1060,4 +1158,11 @@ export function createApiRoutes(
   });
 
   return app;
+}
+
+export interface ApiPlayerService {
+  getQueueMode: PlayerService["getQueueMode"];
+  shuffleQueue: PlayerService["shuffleQueue"];
+  toggleLoop: PlayerService["toggleLoop"];
+  toggleRandom: PlayerService["toggleRandom"];
 }

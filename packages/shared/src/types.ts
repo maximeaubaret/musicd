@@ -100,6 +100,15 @@ export interface MediaSource {
 // Playback types
 export type PlaybackState = "playing" | "paused" | "stopped";
 
+/** Queue playback mode */
+export type QueueMode = {
+  /** Loop the queue indefinitely (replay from beginning when reaching the end) */
+  loop: boolean;
+  /** Pick a random next track instead of sequential */
+  random: boolean;
+};
+
+
 /** Common fields shared across all queue item sources */
 export interface QueueItemBase {
   id: string;
@@ -139,6 +148,7 @@ export interface PlaybackStatus {
   duration: number; // seconds
   queue: QueueItem[];
   queuePosition: number; // Current position in queue (0-based)
+  queueMode: QueueMode; // Current loop/random mode settings
 }
 
 export interface PlayOptions {

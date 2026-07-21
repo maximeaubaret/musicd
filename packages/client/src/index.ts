@@ -13,6 +13,8 @@ import type {
   ArtistResponse,
   QueueOptions,
   PlaybackStatus,
+  QueueModeResponse,
+  QueueMode,
 } from "./types";
 
 export type {
@@ -30,6 +32,8 @@ export type {
   ArtistResponse,
   QueueOptions,
   PlaybackStatus,
+  QueueModeResponse,
+  QueueMode,
 };
 
 /**
@@ -254,6 +258,34 @@ export class MusicDaemonClient {
    */
   async removeFromQueue(index: number): Promise<QueueResponse> {
     return this.request(`/queue/remove/${index}`, "POST");
+  }
+
+  /**
+   * Toggle loop mode
+   */
+  async toggleLoop(): Promise<QueueModeResponse> {
+    return this.request("/queue/loop", "POST");
+  }
+
+  /**
+   * Toggle random mode
+   */
+  async toggleRandom(): Promise<QueueModeResponse> {
+    return this.request("/queue/random", "POST");
+  }
+
+  /**
+   * Shuffle the queue order
+   */
+  async shuffleQueue(): Promise<QueueResponse> {
+    return this.request("/queue/shuffle", "POST");
+  }
+
+  /**
+   * Get current queue mode settings
+   */
+  async getQueueMode(): Promise<{ success: boolean; queueMode: QueueMode }> {
+    return this.request("/queue/mode");
   }
 
   /**

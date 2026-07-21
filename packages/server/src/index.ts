@@ -123,7 +123,7 @@ async function main() {
     playerService.enableStatePersistence(() => {
       const state = playerService.getQueueState();
       try {
-        saveQueueState(state.queue, state.position);
+        saveQueueState(state.queue, state.position, state.queueMode);
         logger.debug("Queue state saved");
       } catch (error) {
         console.error("Failed to save queue state:", error);
@@ -154,10 +154,17 @@ async function main() {
         playerService.restoreQueueState({
           queue: savedState.queue,
           position: savedState.queuePosition,
+          queueMode: savedState.queueMode,
         });
         console.log(`✓ Restored queue with ${savedState.queue.length} items`);
         if (savedState.queuePosition >= 0) {
           console.log(`  Position: Track ${savedState.queuePosition + 1}`);
+        }
+        const mode = savedState.queueMode;
+        if (mode.loop || mode.random) {
+          console.log(
+            `  Mode: ${[mode.loop && "loop", mode.random && "random"].filter(Boolean).join(", ")}`,
+          );
         }
       }
     } catch (error) {
@@ -246,7 +253,7 @@ async function main() {
     if (shouldRestoreQueue) {
       try {
         const state = playerService.getQueueState();
-        saveQueueState(state.queue, state.position);
+        saveQueueState(state.queue, state.position, state.queueMode);
         console.log("✓ Saved queue state");
       } catch (error) {
         console.error("✗ Failed to save queue state:", error);

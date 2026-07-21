@@ -33,6 +33,7 @@ const playerService = {
   addJellyfinItems: failIfCalled,
   clearQueue: failIfCalled,
   getQueue: failIfCalled,
+  getQueueMode: failIfCalled,
   getQueuePosition: failIfCalled,
   getStatus: failIfCalled,
   isPlaying: failIfCalled,
@@ -43,7 +44,10 @@ const playerService = {
   playPrevious: failIfCalled,
   removeFromQueue: failIfCalled,
   resume: failIfCalled,
+  shuffleQueue: failIfCalled,
   stop: failIfCalled,
+  toggleLoop: failIfCalled,
+  toggleRandom: failIfCalled,
 };
 
 const clock: ApiClock = {
