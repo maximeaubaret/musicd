@@ -8,8 +8,97 @@ import {
 } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import type { QueueItem, JellyfinItem, QueueMode } from "./types";
-import { XDG_DATA_DIR, XDG_QUEUE_FILE } from "./constants";
+import { z } from "zod";
+
+import { XDG_DATA_DIR, XDG_QUEUE_FILE, isYouTubeUrl } from "./constants";
+import type { QueueItem, QueueMode } from "./types";
+
+const CURRENT_STATE_VERSION = 3;
+const DEFAULT_QUEUE_MODE: QueueMode = { loop: false, random: false };
+
+const MediaSourceSchema = z.object({
+  Id: z.string(),
+  Path: z.string(),
+  Protocol: z.string(),
+  Container: z.string(),
+});
+
+const JellyfinItemSchema = z.object({
+  Id: z.string().min(1),
+  Name: z.string(),
+  Type: z.string().min(1),
+  Artists: z.array(z.string()).optional(),
+  Album: z.string().optional(),
+  AlbumArtist: z.string().optional(),
+  RunTimeTicks: z.number().finite().nonnegative().optional(),
+  ProductionYear: z.number().int().optional(),
+  IndexNumber: z.number().int().optional(),
+  MediaSources: z.array(MediaSourceSchema).optional(),
+});
+
+const QueueItemBaseSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  artist: z.string().optional(),
+  album: z.string().optional(),
+  duration: z.number().finite().nonnegative(),
+});
+
+const JellyfinQueueItemSchema = QueueItemBaseSchema.extend({
+  source: z.literal("jellyfin"),
+  jellyfinItem: JellyfinItemSchema,
+});
+
+const YouTubeQueueItemSchema = QueueItemBaseSchema.extend({
+  source: z.literal("youtube"),
+  youtubeUrl: z.string().refine(isYouTubeUrl, "Must be a YouTube URL"),
+  videoId: z.string().min(1),
+  uploader: z.string().optional(),
+});
+
+const QueueItemSchema: z.ZodType<QueueItem> = z.discriminatedUnion("source", [
+  JellyfinQueueItemSchema,
+  YouTubeQueueItemSchema,
+]);
+
+const QueuePositionSchema = z.number().int().min(-1);
+const SavedAtSchema = z.number().finite().nonnegative();
+const QueueModeSchema = z.object({
+  loop: z.boolean(),
+  random: z.boolean(),
+});
+
+const QueueStateV1Schema = z.object({
+  queue: z.array(
+    QueueItemBaseSchema.extend({
+      jellyfinItem: JellyfinItemSchema,
+    }),
+  ),
+  queuePosition: QueuePositionSchema,
+  savedAt: SavedAtSchema,
+  version: z.literal(1),
+});
+
+const QueueStateV2Schema = z.object({
+  queue: z.array(QueueItemSchema),
+  queuePosition: QueuePositionSchema,
+  savedAt: SavedAtSchema,
+  version: z.literal(2),
+});
+
+const QueueStateV3Schema = z.object({
+  queue: z.array(QueueItemSchema),
+  queuePosition: QueuePositionSchema,
+  queueMode: QueueModeSchema,
+  savedAt: SavedAtSchema,
+  version: z.literal(CURRENT_STATE_VERSION),
+});
+
+const PersistedQueueStateSchema = z.discriminatedUnion("version", [
+  QueueStateV1Schema,
+  QueueStateV2Schema,
+  QueueStateV3Schema,
+]);
 
 /**
  * Get the XDG data directory path (~/.local/share/musicd)
@@ -32,10 +121,8 @@ export interface QueueState {
   queuePosition: number;
   queueMode: QueueMode;
   savedAt: number;
-  version: number;
+  version: typeof CURRENT_STATE_VERSION;
 }
-
-const CURRENT_STATE_VERSION = 3;
 
 /**
  * Save queue state to disk
@@ -69,22 +156,9 @@ export function saveQueueState(
 }
 
 /**
- * Migrate v1 queue state to v2 by adding source: "jellyfin" to all items.
- * V1 items always have jellyfinItem but no source field.
+ * Migrate v1 queue state to v3 by adding the Jellyfin source and queue modes.
  */
-function migrateV1toV2(parsed: {
-  queue: {
-    id: string;
-    name: string;
-    artist?: string;
-    album?: string;
-    duration: number;
-    jellyfinItem: JellyfinItem;
-  }[];
-  queuePosition: number;
-  savedAt: number;
-  version: number;
-}): QueueState {
+function migrateV1toV3(parsed: z.infer<typeof QueueStateV1Schema>): QueueState {
   const migratedQueue: QueueItem[] = parsed.queue.map((item) => ({
     ...item,
     source: "jellyfin" as const,
@@ -93,7 +167,7 @@ function migrateV1toV2(parsed: {
   return {
     queue: migratedQueue,
     queuePosition: parsed.queuePosition,
-    queueMode: { loop: false, random: false },
+    queueMode: { ...DEFAULT_QUEUE_MODE },
     savedAt: parsed.savedAt,
     version: CURRENT_STATE_VERSION,
   };
@@ -102,19 +176,27 @@ function migrateV1toV2(parsed: {
 /**
  * Migrate v2 queue state to v3 by adding queueMode field.
  */
-function migrateV2toV3(parsed: {
-  queue: QueueItem[];
-  queuePosition: number;
-  savedAt: number;
-  version: number;
-}): QueueState {
+function migrateV2toV3(parsed: z.infer<typeof QueueStateV2Schema>): QueueState {
   return {
     queue: parsed.queue,
     queuePosition: parsed.queuePosition,
-    queueMode: { loop: false, random: false },
+    queueMode: { ...DEFAULT_QUEUE_MODE },
     savedAt: parsed.savedAt,
     version: CURRENT_STATE_VERSION,
   };
+}
+
+/**
+ * Best-effort persistence keeps a valid migrated state usable in memory even
+ * when the upgraded file cannot be written.
+ */
+function resaveMigratedState(state: QueueState): QueueState {
+  try {
+    saveQueueState(state.queue, state.queuePosition, state.queueMode);
+  } catch {
+    // Non-fatal: migration still works in memory even if re-save fails
+  }
+  return state;
 }
 
 /**
@@ -128,46 +210,21 @@ export function loadQueueState(): QueueState | null {
 
   try {
     const data = readFileSync(queuePath, "utf-8");
-    const parsed = JSON.parse(data);
-
-    // Basic validation
-    if (!parsed.queue || !Array.isArray(parsed.queue)) {
+    const parsed: unknown = JSON.parse(data);
+    const result = PersistedQueueStateSchema.safeParse(parsed);
+    if (!result.success) {
       console.warn("Invalid queue state format, ignoring");
       return null;
     }
 
-    // Check version compatibility
-    if (parsed.version > CURRENT_STATE_VERSION) {
-      console.warn(
-        `Queue state version ${parsed.version} is newer than supported version ${CURRENT_STATE_VERSION}, ignoring`,
-      );
-      return null;
+    if (result.data.version === 1) {
+      return resaveMigratedState(migrateV1toV3(result.data));
     }
 
-    // Migrate v1 -> v2 -> v3: add source: "jellyfin" to all items, then add queueMode
-    if (parsed.version === 1) {
-      const migrated = migrateV1toV2(parsed);
-      // Re-save with new version
-      try {
-        saveQueueState(migrated.queue, migrated.queuePosition, migrated.queueMode);
-      } catch {
-        // Non-fatal: migration still works in memory even if re-save fails
-      }
-      return migrated;
+    if (result.data.version === 2) {
+      return resaveMigratedState(migrateV2toV3(result.data));
     }
-
-    // Migrate v2 -> v3: add queueMode field
-    if (parsed.version === 2) {
-      const migrated = migrateV2toV3(parsed);
-      // Re-save with new version
-      try {
-        saveQueueState(migrated.queue, migrated.queuePosition, migrated.queueMode);
-      } catch {
-        // Non-fatal: migration still works in memory even if re-save fails
-      }
-      return migrated;
-    }
-    return parsed as QueueState;
+    return result.data;
   } catch (error) {
     console.warn("Failed to load queue state:", error);
     return null;

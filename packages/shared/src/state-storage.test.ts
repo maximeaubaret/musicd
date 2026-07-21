@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
@@ -70,22 +70,34 @@ function createYouTubeQueueItem(
   };
 }
 
+function writeQueueFile(contents: string): void {
+  mkdirSync(join(testDir, "musicd"), { recursive: true });
+  writeFileSync(getQueueFilePath(), contents, "utf-8");
+}
+
+function writePersistedState(state: unknown): void {
+  writeQueueFile(JSON.stringify(state, null, 2));
+}
+
+function readPersistedState(): unknown {
+  return JSON.parse(readFileSync(getQueueFilePath(), "utf-8"));
+}
+
 describe("state-storage", () => {
-  describe("v2 save and load", () => {
-    test("saves and loads Jellyfin queue items", () => {
+  describe("v3 save and load", () => {
+    test("preserves queue items, position, loop mode, and random mode", () => {
       const items = [
         createJellyfinQueueItem("jf-1", "Track 1"),
         createJellyfinQueueItem("jf-2", "Track 2"),
       ];
-      saveQueueState(items, 1);
+      saveQueueState(items, 1, { loop: true, random: true });
 
       const loaded = loadQueueState();
       expect(loaded).not.toBeNull();
-      expect(loaded!.queue).toHaveLength(2);
+      expect(loaded!.queue).toEqual(items);
       expect(loaded!.queuePosition).toBe(1);
-      expect(loaded!.version).toBe(2);
-      expect(loaded!.queue[0].source).toBe("jellyfin");
-      expect(loaded!.queue[1].source).toBe("jellyfin");
+      expect(loaded!.queueMode).toEqual({ loop: true, random: true });
+      expect(loaded!.version).toBe(3);
     });
 
     test("saves and loads YouTube queue items", () => {
@@ -119,8 +131,8 @@ describe("state-storage", () => {
     });
   });
 
-  describe("v1 to v2 migration", () => {
-    test("migrates v1 items by adding source: jellyfin", () => {
+  describe("migration", () => {
+    test("migrates v1 items to v3 with safe queue mode defaults", () => {
       // Write a v1 state file (no source field on items)
       const v1State = {
         queue: [
@@ -158,14 +170,13 @@ describe("state-storage", () => {
         version: 1,
       };
 
-      const queuePath = getQueueFilePath();
-      mkdirSync(join(testDir, "musicd"), { recursive: true });
-      writeFileSync(queuePath, JSON.stringify(v1State, null, 2), "utf-8");
+      writePersistedState(v1State);
 
       const loaded = loadQueueState();
       expect(loaded).not.toBeNull();
-      expect(loaded!.version).toBe(2);
+      expect(loaded!.version).toBe(3);
       expect(loaded!.queue).toHaveLength(2);
+      expect(loaded!.queueMode).toEqual({ loop: false, random: false });
 
       // All items should now have source: "jellyfin"
       expect(loaded!.queue[0].source).toBe("jellyfin");
@@ -177,7 +188,7 @@ describe("state-storage", () => {
       expect(loaded!.queuePosition).toBe(0);
     });
 
-    test("migration re-saves file as v2", () => {
+    test("re-saves migrated v1 state as v3", () => {
       const v1State = {
         queue: [
           {
@@ -197,18 +208,37 @@ describe("state-storage", () => {
         version: 1,
       };
 
-      const queuePath = getQueueFilePath();
-      mkdirSync(join(testDir, "musicd"), { recursive: true });
-      writeFileSync(queuePath, JSON.stringify(v1State, null, 2), "utf-8");
+      writePersistedState(v1State);
 
-      // First load triggers migration
       loadQueueState();
 
-      // Second load should read the re-saved v2 file directly (no migration needed)
-      const reloaded = loadQueueState();
-      expect(reloaded).not.toBeNull();
-      expect(reloaded!.version).toBe(2);
-      expect(reloaded!.queue[0].source).toBe("jellyfin");
+      expect(readPersistedState()).toMatchObject({
+        version: 3,
+        queueMode: { loop: false, random: false },
+        queue: [{ source: "jellyfin" }],
+      });
+    });
+
+    test("migrates and re-saves v2 state as v3 with safe queue mode defaults", () => {
+      writePersistedState({
+        queue: [createYouTubeQueueItem("abc123", "YT Song")],
+        queuePosition: 0,
+        savedAt: 123456,
+        version: 2,
+      });
+
+      const loaded = loadQueueState();
+      expect(loaded).not.toBeNull();
+      expect(loaded!.version).toBe(3);
+      expect(loaded!.queueMode).toEqual({ loop: false, random: false });
+      expect(loaded!.queue[0]).toEqual(
+        createYouTubeQueueItem("abc123", "YT Song"),
+      );
+
+      expect(readPersistedState()).toMatchObject({
+        version: 3,
+        queueMode: { loop: false, random: false },
+      });
     });
   });
 
@@ -218,38 +248,126 @@ describe("state-storage", () => {
     });
 
     test("returns null for invalid JSON", () => {
-      const queuePath = getQueueFilePath();
-      mkdirSync(join(testDir, "musicd"), { recursive: true });
-      writeFileSync(queuePath, "not valid json", "utf-8");
+      writeQueueFile("not valid json");
 
       expect(loadQueueState()).toBeNull();
     });
 
     test("returns null for missing queue array", () => {
-      const queuePath = getQueueFilePath();
-      mkdirSync(join(testDir, "musicd"), { recursive: true });
-      writeFileSync(
-        queuePath,
-        JSON.stringify({ queuePosition: 0, version: 2 }),
-        "utf-8",
+      writePersistedState({ queuePosition: 0, version: 2 });
+
+      expect(loadQueueState()).toBeNull();
+    });
+
+    test("returns null for malformed v3 fields", () => {
+      const validState = {
+        queue: [],
+        queuePosition: -1,
+        queueMode: { loop: false, random: false },
+        savedAt: 123456,
+        version: 3,
+      };
+      const malformedStates = [
+        { ...validState, queuePosition: "-1" },
+        { ...validState, queueMode: { loop: "false", random: false } },
+        { ...validState, savedAt: "123456" },
+        { ...validState, version: 0 },
+      ];
+
+      for (const malformedState of malformedStates) {
+        writePersistedState(malformedState);
+        expect(loadQueueState()).toBeNull();
+      }
+    });
+
+    test("returns null for numeric fields that overflow JSON parsing", () => {
+      writeQueueFile(
+        '{"queue":[],"queuePosition":-1,"queueMode":{"loop":false,"random":false},"savedAt":1e400,"version":3}',
       );
 
       expect(loadQueueState()).toBeNull();
     });
 
-    test("returns null for future version", () => {
-      const queuePath = getQueueFilePath();
-      mkdirSync(join(testDir, "musicd"), { recursive: true });
-      writeFileSync(
-        queuePath,
-        JSON.stringify({
-          queue: [],
+    test("returns null for invalid queue items in supported versions", () => {
+      const invalidStates = [
+        {
+          queue: [
+            {
+              id: "jf-1",
+              name: "Broken Jellyfin item",
+              duration: 180,
+              jellyfinItem: { Id: "jf-1", Name: "Broken Jellyfin item" },
+            },
+          ],
           queuePosition: 0,
-          savedAt: Date.now(),
-          version: 99,
-        }),
-        "utf-8",
-      );
+          savedAt: 123456,
+          version: 1,
+        },
+        {
+          queue: [
+            {
+              id: "yt-abc123",
+              name: "Broken YouTube item",
+              duration: 240,
+              source: "youtube",
+              youtubeUrl: 42,
+              videoId: "abc123",
+            },
+          ],
+          queuePosition: 0,
+          savedAt: 123456,
+          version: 2,
+        },
+        {
+          queue: [
+            {
+              id: "jf-1",
+              name: "Broken current item",
+              duration: -1,
+              source: "jellyfin",
+              jellyfinItem: {
+                Id: "jf-1",
+                Name: "Broken current item",
+                Type: "Audio",
+              },
+            },
+          ],
+          queuePosition: 0,
+          queueMode: { loop: false, random: false },
+          savedAt: 123456,
+          version: 3,
+        },
+        {
+          queue: [
+            {
+              id: "yt-abc123",
+              name: "Wrong source URL",
+              duration: 240,
+              source: "youtube",
+              youtubeUrl: "https://example.com/watch?v=abc123",
+              videoId: "abc123",
+            },
+          ],
+          queuePosition: 0,
+          queueMode: { loop: false, random: false },
+          savedAt: 123456,
+          version: 3,
+        },
+      ];
+
+      for (const invalidState of invalidStates) {
+        writePersistedState(invalidState);
+        expect(loadQueueState()).toBeNull();
+      }
+    });
+
+    test("returns null for future version", () => {
+      writePersistedState({
+        queue: [],
+        queuePosition: 0,
+        savedAt: Date.now(),
+        version: 99,
+      });
 
       expect(loadQueueState()).toBeNull();
     });
