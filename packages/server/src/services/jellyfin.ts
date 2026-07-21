@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type {
   JellyfinConfig,
   JellyfinItem,
@@ -14,24 +16,109 @@ import { logger } from "../logger";
 
 import type { PlaybackSource } from "./playback/backend";
 
-// Jellyfin API response types
-interface JellyfinSearchHint {
-  Id: string;
-  Name: string;
-  Type: string;
-  Artists?: string[];
-  Album?: string;
-  AlbumArtist?: string;
-  RunTimeTicks?: number;
-  ProductionYear?: number;
-}
+type AuthSaver = (result: AuthenticationResult, username: string) => void;
 
-interface JellyfinSearchResponse {
-  SearchHints?: JellyfinSearchHint[];
-}
+const AuthenticationResultSchema = z.object({
+  User: z.object({
+    Id: z.string().min(1),
+    Name: z.string().min(1),
+  }),
+  AccessToken: z.string().min(1),
+  ServerId: z.string().min(1),
+});
 
-interface JellyfinItemsResponse {
-  Items?: JellyfinItem[];
+const JellyfinMediaSourceSchema = z.object({
+  Id: z.string(),
+  Path: z.string(),
+  Protocol: z.string(),
+  Container: z.string(),
+});
+
+const OptionalStringSchema = z
+  .string()
+  .nullish()
+  .transform((value) => value ?? undefined);
+const OptionalFiniteNumberSchema = z
+  .number()
+  .finite()
+  .nullish()
+  .transform((value) => value ?? undefined);
+const OptionalArtistsSchema = z
+  .array(z.string())
+  .nullish()
+  .transform((value) => value ?? undefined);
+const OptionalMediaSourcesSchema = z
+  .array(JellyfinMediaSourceSchema)
+  .nullish()
+  .transform((value) => value ?? undefined);
+
+const JellyfinItemSchema = z.object({
+  Id: z.string(),
+  Name: z.string(),
+  Type: z.string(),
+  Artists: OptionalArtistsSchema,
+  Album: OptionalStringSchema,
+  AlbumArtist: OptionalStringSchema,
+  RunTimeTicks: OptionalFiniteNumberSchema,
+  ProductionYear: OptionalFiniteNumberSchema,
+  IndexNumber: OptionalFiniteNumberSchema,
+  MediaSources: OptionalMediaSourcesSchema,
+});
+
+const JellyfinSearchHintSchema = JellyfinItemSchema.pick({
+  Id: true,
+  Name: true,
+  Type: true,
+  Artists: true,
+  Album: true,
+  AlbumArtist: true,
+  RunTimeTicks: true,
+  ProductionYear: true,
+});
+
+const JellyfinSearchResponseSchema = z.object({
+  SearchHints: z
+    .array(JellyfinSearchHintSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+});
+
+const JellyfinItemsResponseSchema = z.object({
+  Items: z
+    .array(JellyfinItemSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+});
+
+class JellyfinResponseError extends JellyfinError {}
+
+async function parseJellyfinResponse<Schema extends z.ZodTypeAny>(
+  response: Response,
+  schema: Schema,
+  operation: string,
+): Promise<z.output<Schema>> {
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new JellyfinResponseError(
+      `Invalid Jellyfin response while ${operation}: response body is not valid JSON`,
+    );
+  }
+
+  const result = schema.safeParse(payload);
+  if (!result.success) {
+    const invalidFields = [
+      ...new Set(
+        result.error.issues.map((issue) => issue.path.join(".") || "response"),
+      ),
+    ].join(", ");
+    throw new JellyfinResponseError(
+      `Invalid Jellyfin response while ${operation}: invalid fields: ${invalidFields}`,
+    );
+  }
+
+  return result.data;
 }
 
 export class JellyfinService {
@@ -44,6 +131,7 @@ export class JellyfinService {
   constructor(
     config: JellyfinConfig,
     authLoader: () => StoredAuth | null = loadAuth,
+    private readonly authSaver: AuthSaver = saveAuth,
   ) {
     this.config = config;
 
@@ -90,7 +178,11 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as AuthenticationResult;
+      const result = await parseJellyfinResponse(
+        response,
+        AuthenticationResultSchema,
+        "authenticating",
+      );
 
       // Store the token
       this.accessToken = result.AccessToken;
@@ -99,7 +191,7 @@ export class JellyfinService {
       // Save to disk for future use
       const authPath = getAuthFilePath();
       logger.info(`Saving auth to ${authPath}`);
-      saveAuth(result, username);
+      this.authSaver(result, username);
       logger.info(`Auth saved successfully for user: ${username}`);
 
       return result;
@@ -200,8 +292,11 @@ export class JellyfinService {
         );
       }
 
-      const item = (await response.json()) as JellyfinItem;
-      return item;
+      return await parseJellyfinResponse(
+        response,
+        JellyfinItemSchema,
+        "fetching item metadata",
+      );
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
@@ -257,8 +352,12 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as JellyfinSearchResponse;
-      const searchHints = result.SearchHints || [];
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinSearchResponseSchema,
+        "searching for items",
+      );
+      const searchHints = result.SearchHints;
 
       // Map SearchHint results to JellyfinItem format
       let items: JellyfinItem[] = searchHints.map((hint) => ({
@@ -334,8 +433,12 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as JellyfinItemsResponse;
-      const items = result.Items || [];
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsResponseSchema,
+        "fetching artist items for search",
+      );
+      const items = result.Items;
 
       return items.map((item) => ({
         Id: item.Id,
@@ -347,6 +450,9 @@ export class JellyfinService {
         RunTimeTicks: item.RunTimeTicks,
       }));
     } catch (error) {
+      if (error instanceof JellyfinResponseError) {
+        throw error;
+      }
       // Don't fail the whole search if artist items fetch fails
       logger.error("Error fetching items by artist:", error);
       return [];
@@ -394,8 +500,12 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as JellyfinItemsResponse;
-      const items = result.Items || [];
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsResponseSchema,
+        "fetching album tracks",
+      );
+      const items = result.Items;
 
       return items.map((item) => ({
         Id: item.Id,
@@ -455,8 +565,12 @@ export class JellyfinService {
         );
       }
 
-      const result = (await response.json()) as JellyfinItemsResponse;
-      const items = result.Items || [];
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsResponseSchema,
+        "fetching artist tracks",
+      );
+      const items = result.Items;
 
       return items.map((item) => ({
         Id: item.Id,
