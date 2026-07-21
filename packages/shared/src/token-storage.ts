@@ -8,8 +8,11 @@ import {
 } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import type { AuthenticationResult } from "./types";
+import { z } from "zod";
+
 import { XDG_DATA_DIR, XDG_AUTH_FILE } from "./constants";
+
+import type { AuthenticationResult } from "./types";
 
 /**
  * Get the XDG data directory path (~/.local/share/musicd)
@@ -34,6 +37,14 @@ export interface StoredAuth {
   username: string;
   createdAt: number;
 }
+
+const StoredAuthSchema: z.ZodType<StoredAuth> = z.object({
+  accessToken: z.string().min(1),
+  userId: z.string().min(1),
+  serverId: z.string().min(1),
+  username: z.string().min(1),
+  createdAt: z.number().finite().nonnegative(),
+});
 
 /**
  * Save authentication data to disk
@@ -77,9 +88,15 @@ export function loadAuth(): StoredAuth | null {
 
   try {
     const data = readFileSync(authPath, "utf-8");
-    return JSON.parse(data) as StoredAuth;
-  } catch (error) {
-    console.warn("Failed to load authentication data:", error);
+    const parsed: unknown = JSON.parse(data);
+    const result = StoredAuthSchema.safeParse(parsed);
+    if (!result.success) {
+      console.warn("Invalid authentication data format, ignoring");
+      return null;
+    }
+    return result.data;
+  } catch {
+    console.warn("Failed to load authentication data, ignoring");
     return null;
   }
 }
