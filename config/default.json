@@ -1,14 +1,15 @@
 {
   "jellyfin": {
-    "serverUrl": "http://localhost:8096",
-    "username": "",
-    "password": ""
+    "serverUrl": "http://localhost:8096"
   },
   "daemon": {
-    "port": 8765,
-    "host": "127.0.0.1"
+    "host": "127.0.0.1",
+    "port": 8765
   },
   "audio": {
     "device": "default"
+  },
+  "state": {
+    "restoreQueue": true
   }
 }
