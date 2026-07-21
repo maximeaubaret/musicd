@@ -27,17 +27,18 @@ const AuthenticationResultSchema = z.object({
   ServerId: z.string().min(1),
 });
 
-const JellyfinMediaSourceSchema = z.object({
-  Id: z.string(),
-  Path: z.string(),
-  Protocol: z.string(),
-  Container: z.string(),
-});
-
 const OptionalStringSchema = z
   .string()
   .nullish()
   .transform((value) => value ?? undefined);
+
+const JellyfinMediaSourceSchema = z.object({
+  Id: OptionalStringSchema,
+  Path: OptionalStringSchema,
+  Protocol: z.string().min(1),
+  Container: OptionalStringSchema,
+});
+
 const OptionalFiniteNumberSchema = z
   .number()
   .finite()
@@ -53,9 +54,9 @@ const OptionalMediaSourcesSchema = z
   .transform((value) => value ?? undefined);
 
 const JellyfinItemSchema = z.object({
-  Id: z.string(),
-  Name: z.string(),
-  Type: z.string(),
+  Id: z.string().min(1),
+  Name: z.string().min(1),
+  Type: z.string().min(1),
   Artists: OptionalArtistsSchema,
   Album: OptionalStringSchema,
   AlbumArtist: OptionalStringSchema,

@@ -6,6 +6,16 @@ import { JellyfinService } from "./jellyfin";
 
 const originalFetch = globalThis.fetch;
 
+type FetchImplementation = (
+  ...args: Parameters<typeof originalFetch>
+) => Promise<Response>;
+
+function installFetchMock(fetchImplementation: FetchImplementation): void {
+  globalThis.fetch = Object.assign(fetchImplementation, {
+    preconnect: originalFetch.preconnect,
+  });
+}
+
 function createAuthenticatedService(token: string = "jellyfin-token") {
   return new JellyfinService({ serverUrl: "https://jellyfin.example" }, () => ({
     accessToken: token,
@@ -18,9 +28,7 @@ function createAuthenticatedService(token: string = "jellyfin-token") {
 
 function mockJsonResponse(body: unknown, init?: ResponseInit): void {
   const fetchMock = mock(async () => Response.json(body, init));
-  globalThis.fetch = Object.assign(fetchMock, {
-    preconnect: originalFetch.preconnect,
-  });
+  installFetchMock(fetchMock);
 }
 
 function mockJsonResponses(bodies: unknown[]): void {
@@ -33,16 +41,12 @@ function mockJsonResponses(bodies: unknown[]): void {
     index += 1;
     return Response.json(body);
   });
-  globalThis.fetch = Object.assign(fetchMock, {
-    preconnect: originalFetch.preconnect,
-  });
+  installFetchMock(fetchMock);
 }
 
 function mockResponse(response: Response): void {
   const fetchMock = mock(async () => response);
-  globalThis.fetch = Object.assign(fetchMock, {
-    preconnect: originalFetch.preconnect,
-  });
+  installFetchMock(fetchMock);
 }
 
 async function captureError(action: () => Promise<unknown>): Promise<Error> {
@@ -70,6 +74,14 @@ describe("JellyfinService item responses", () => {
       Artists: null,
       Album: null,
       RunTimeTicks: null,
+      MediaSources: [
+        {
+          Id: null,
+          Path: null,
+          Protocol: "File",
+          Container: null,
+        },
+      ],
     });
     const service = createAuthenticatedService();
 
@@ -83,6 +95,7 @@ describe("JellyfinService item responses", () => {
     expect(item.Artists).toBeUndefined();
     expect(item.Album).toBeUndefined();
     expect(item.RunTimeTicks).toBeUndefined();
+    expect(item.MediaSources).toEqual([{ Protocol: "File" }]);
   });
 
   test("rejects item metadata without required domain fields", async () => {
@@ -95,6 +108,17 @@ describe("JellyfinService item responses", () => {
     await expect(result).rejects.toMatchObject({
       message: expect.stringContaining("fetching item metadata"),
     });
+  });
+
+  test("rejects empty required item fields", async () => {
+    mockJsonResponse({ Id: "track-1", Name: "", Type: "Audio" });
+    const service = createAuthenticatedService();
+
+    const error = await captureError(() => service.getItem("track-1"));
+
+    expect(error).toBeInstanceOf(JellyfinError);
+    expect(error.message).toContain("fetching item metadata");
+    expect(error.message).toContain("Name");
   });
 });
 
@@ -238,9 +262,7 @@ describe("JellyfinService playback source", () => {
         Type: "Audio",
       }),
     );
-    globalThis.fetch = Object.assign(fetchMock, {
-      preconnect: originalFetch.preconnect,
-    });
+    installFetchMock(fetchMock);
     const service = new JellyfinService(
       { serverUrl: "https://jellyfin.example" },
       () => ({

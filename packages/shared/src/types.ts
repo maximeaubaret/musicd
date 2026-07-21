@@ -100,10 +100,10 @@ export interface JellyfinItem {
 }
 
 export interface MediaSource {
-  Id: string;
-  Path: string;
+  Id?: string;
+  Path?: string;
   Protocol: string;
-  Container: string;
+  Container?: string;
 }
 
 // Playback types

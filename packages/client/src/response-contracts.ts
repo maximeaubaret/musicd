@@ -24,10 +24,10 @@ export const DaemonErrorResponseSchema = z.object({
 });
 
 const MediaSourceSchema = z.object({
-  Id: z.string(),
-  Path: z.string(),
+  Id: z.string().optional(),
+  Path: z.string().optional(),
   Protocol: z.string(),
-  Container: z.string(),
+  Container: z.string().optional(),
 });
 
 const JellyfinItemSchema = z.object({
