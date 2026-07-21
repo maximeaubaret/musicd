@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "child_process";
-import type { PlaybackBackend } from "./backend";
+import { once } from "events";
+
+import { isCredentialKey } from "@musicd/shared";
+
+import type { PlaybackBackend, PlaybackSource } from "./backend";
 import { PlaybackError } from "./backend";
 import { logger } from "../../logger";
 
@@ -20,6 +24,44 @@ export function getFFPlayExitError(
   );
 }
 
+function requiresPrivateTransport(source: PlaybackSource): boolean {
+  if (source.headers && Object.keys(source.headers).length > 0) {
+    return true;
+  }
+
+  const url = new URL(source.url);
+  return [...url.searchParams.keys()].some(isCredentialKey);
+}
+
+interface FFPlayBackendDependencies {
+  spawnProcess: (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ) => ChildProcess;
+  fetchStream: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>;
+  waitForStartup: (milliseconds: number) => Promise<void>;
+}
+
+/**
+ * Build ffplay arguments without placing protected stream credentials in argv.
+ */
+export function getFFPlayArguments(
+  source: PlaybackSource,
+  debug: boolean,
+): string[] {
+  return [
+    "-nodisp",
+    "-autoexit",
+    "-loglevel",
+    debug ? "info" : "quiet",
+    requiresPrivateTransport(source) ? "pipe:0" : source.url,
+  ];
+}
+
 /**
  * FFPlay backend implementation
  * Uses ffplay (from ffmpeg) for audio playback
@@ -32,36 +74,72 @@ export class FFPlayBackend implements PlaybackBackend {
   private pausedAt: number = 0;
   private isPaused_: boolean = false;
   private manuallyStopped: boolean = false;
+  private streamAbortController: AbortController | null = null;
+  private spawnProcess: FFPlayBackendDependencies["spawnProcess"];
+  private fetchStream: FFPlayBackendDependencies["fetchStream"];
+  private waitForStartup: FFPlayBackendDependencies["waitForStartup"];
   private onCompleteCallback?: (position: number) => void | Promise<void>;
   private onErrorCallback?: (
     error: Error,
     position: number,
   ) => void | Promise<void>;
 
-  constructor(audioDevice: string = "default", debug: boolean = false) {
+  constructor(
+    audioDevice: string = "default",
+    debug: boolean = false,
+    dependencies: Partial<FFPlayBackendDependencies> = {},
+  ) {
     this.audioDevice = audioDevice;
     this.debug = debug;
+    this.spawnProcess =
+      dependencies.spawnProcess ??
+      ((command, args, options) => spawn(command, args, options));
+    this.fetchStream = dependencies.fetchStream ?? fetch;
+    this.waitForStartup =
+      dependencies.waitForStartup ??
+      ((milliseconds) =>
+        new Promise((resolve) => setTimeout(resolve, milliseconds)));
   }
 
-  async play(url: string): Promise<void> {
+  async play(source: PlaybackSource): Promise<void> {
     // Stop any existing playback
     if (this.isPlaying()) {
       await this.stop();
     }
 
     try {
+      const usePrivateTransport = requiresPrivateTransport(source);
+      let responseBody: ReadableStream<Uint8Array> | null = null;
+
+      if (usePrivateTransport) {
+        const abortController = new AbortController();
+        this.streamAbortController = abortController;
+        const response = await this.fetchStream(source.url, {
+          headers: source.headers,
+          redirect: "error",
+          signal: abortController.signal,
+        });
+        if (!response.ok) {
+          throw new PlaybackError(
+            `Stream request failed with status ${response.status}`,
+          );
+        }
+        if (!response.body) {
+          throw new PlaybackError("Stream response did not include a body");
+        }
+        responseBody = response.body;
+      }
+
       // Spawn ffplay process
-      const args = [
-        "-nodisp", // No video display
-        "-autoexit", // Exit when playback finishes
-        "-loglevel",
-        this.debug ? "info" : "quiet", // Show output in debug mode
-        url,
-      ];
+      const args = getFFPlayArguments(source, this.debug);
 
       // Configure spawn options
       const spawnOptions: SpawnOptions = {
-        stdio: this.debug ? ["ignore", "pipe", "pipe"] : "ignore",
+        stdio: [
+          usePrivateTransport ? "pipe" : "ignore",
+          this.debug ? "pipe" : "ignore",
+          this.debug ? "pipe" : "ignore",
+        ],
       };
 
       // Set SDL audio driver via environment variable if not default
@@ -82,11 +160,30 @@ export class FFPlayBackend implements PlaybackBackend {
         }
       }
 
-      this.process = spawn("ffplay", args, spawnOptions);
+      this.process = this.spawnProcess("ffplay", args, spawnOptions);
       this.startTime = Date.now();
       this.pausedAt = 0;
       this.isPaused_ = false;
       this.manuallyStopped = false;
+
+      if (responseBody) {
+        const childProcess = this.process;
+        const abortController = this.streamAbortController;
+        if (!childProcess.stdin || !abortController) {
+          throw new PlaybackError("Unable to open ffplay input pipe");
+        }
+        void this.pipeStreamToFFPlay(
+          responseBody,
+          childProcess,
+          abortController.signal,
+        ).catch((error) => {
+          if (abortController.signal.aborted || this.manuallyStopped) {
+            return;
+          }
+          logger.error("[ffplay] protected stream pipe failed:", error);
+          childProcess.kill("SIGTERM");
+        });
+      }
 
       // Capture stdout/stderr when in debug mode
       if (this.debug) {
@@ -167,7 +264,7 @@ export class FFPlayBackend implements PlaybackBackend {
 
       // Wait a bit to ensure ffplay has started
       // This detects immediate startup failures (bad URL, missing codec, etc.)
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await this.waitForStartup(500);
 
       if (!this.process || this.process.exitCode !== null) {
         throw new PlaybackError("Failed to start ffplay process");
@@ -217,6 +314,7 @@ export class FFPlayBackend implements PlaybackBackend {
 
     const processToStop = this.process!;
     this.manuallyStopped = true;
+    this.streamAbortController?.abort();
 
     try {
       // Remove all listeners to prevent exit handler from running
@@ -283,7 +381,38 @@ export class FFPlayBackend implements PlaybackBackend {
     }
   }
 
+  private async pipeStreamToFFPlay(
+    body: ReadableStream<Uint8Array>,
+    childProcess: ChildProcess,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const stdin = childProcess.stdin;
+    if (!stdin) {
+      throw new PlaybackError("Unable to open ffplay input pipe");
+    }
+
+    const reader = body.getReader();
+    try {
+      while (!signal.aborted) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          break;
+        }
+        if (!stdin.write(chunk.value)) {
+          await once(stdin, "drain");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+      if (!stdin.destroyed) {
+        stdin.end();
+      }
+    }
+  }
+
   private cleanup(): void {
+    this.streamAbortController?.abort();
+    this.streamAbortController = null;
     this.process = null;
     this.startTime = 0;
     this.pausedAt = 0;

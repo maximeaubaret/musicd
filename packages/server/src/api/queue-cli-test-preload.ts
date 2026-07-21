@@ -117,10 +117,9 @@ const youtubeService: ApiYouTubeService = {
 };
 
 const player = new PlayerService(new MockBackend());
-player.registerStreamUrlResolver(
-  "jellyfin",
-  async (item) => `http://test.local/stream/${item.id}`,
-);
+player.registerPlaybackSourceResolver("jellyfin", async (item) => ({
+  url: `http://test.local/stream/${item.id}`,
+}));
 player.addItems(createJellyfinQueueItems(scenario.initialItems));
 if (scenario.initialQueueMode) {
   player.setQueueMode(scenario.initialQueueMode);

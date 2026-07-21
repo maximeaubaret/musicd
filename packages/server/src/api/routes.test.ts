@@ -94,10 +94,9 @@ interface QueueAddTestRequest {
 function createQueueTestApp(library: QueueTestLibrary) {
   const backend = new MockBackend();
   const player = new PlayerService(backend);
-  player.registerStreamUrlResolver(
-    "jellyfin",
-    async (item) => `http://test.local/stream/${item.id}`,
-  );
+  player.registerPlaybackSourceResolver("jellyfin", async (item) => ({
+    url: `http://test.local/stream/${item.id}`,
+  }));
 
   const app = createApp({
     jellyfinService: {

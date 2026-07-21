@@ -1,9 +1,11 @@
 import { PlayerError } from "@musicd/shared";
 
 import type { PlaybackStatus, QueueItem, QueueMode } from "@musicd/shared";
-import type { PlaybackBackend } from "./playback/backend";
+import type { PlaybackBackend, PlaybackSource } from "./playback/backend";
 
-export type StreamUrlResolver = (item: QueueItem) => Promise<string>;
+export type PlaybackSourceResolver = (
+  item: QueueItem,
+) => Promise<PlaybackSource>;
 
 interface PlaybackReporter {
   reportStart: (itemId: string, sessionId: string) => Promise<void>;
@@ -31,7 +33,8 @@ export class PlayerService {
   private currentItem: QueueItem | null = null;
   private queue: QueueItem[] = [];
   private queuePosition: number = -1; // -1 means no queue, 0+ is current position
-  private streamUrlResolvers: Map<string, StreamUrlResolver> = new Map();
+  private playbackSourceResolvers: Map<string, PlaybackSourceResolver> =
+    new Map();
   private playbackSession: PlaybackSession | null = null;
   private playbackSessionSequence: number = 0;
   private playbackGeneration: number = 0;
@@ -73,11 +76,14 @@ export class PlayerService {
   }
 
   /**
-   * Register a stream URL resolver for a source type
+   * Register a playback source resolver for a source type
    * Each source (jellyfin, youtube, etc.) needs its own resolver
    */
-  registerStreamUrlResolver(source: string, resolver: StreamUrlResolver): void {
-    this.streamUrlResolvers.set(source, resolver);
+  registerPlaybackSourceResolver(
+    source: string,
+    resolver: PlaybackSourceResolver,
+  ): void {
+    this.playbackSourceResolvers.set(source, resolver);
   }
 
   /**
@@ -137,9 +143,12 @@ export class PlayerService {
   }
 
   /**
-   * Play a URL (internal method)
+   * Play a resolved stream (internal method)
    */
-  private async playInternal(url: string, item: QueueItem): Promise<void> {
+  private async playInternal(
+    source: PlaybackSource,
+    item: QueueItem,
+  ): Promise<void> {
     // Stop any existing playback
     if (this.backend.isPlaying()) {
       await this.stop();
@@ -151,7 +160,7 @@ export class PlayerService {
       this.playbackGeneration++;
 
       // Play through backend (no ffplay details here!)
-      await this.backend.play(url);
+      await this.backend.play(source);
 
       // Report playback start to Jellyfin (only for Jellyfin items)
       if (this.playbackReporter && item.source === "jellyfin") {
@@ -268,18 +277,18 @@ export class PlayerService {
     }
 
     const item = this.queue[position];
-    const resolver = this.streamUrlResolvers.get(item.source);
+    const resolver = this.playbackSourceResolvers.get(item.source);
     if (!resolver) {
       throw new PlayerError(
-        `No stream URL resolver registered for source: ${item.source}`,
+        `No playback source resolver registered for source: ${item.source}`,
       );
     }
 
     this.queuePosition = position;
     this.triggerStateSave();
 
-    const streamUrl = await resolver(item);
-    await this.playInternal(streamUrl, item);
+    const source = await resolver(item);
+    await this.playInternal(source, item);
   }
 
   /**

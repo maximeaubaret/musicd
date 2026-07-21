@@ -1,3 +1,5 @@
+import { isCredentialKey } from "@musicd/shared";
+
 import type {
   ActionResponse,
   AuthResponse,
@@ -74,6 +76,12 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
+function serializeLogBody(body: unknown): string {
+  return JSON.stringify(body, (key, value) => {
+    return isCredentialKey(key) ? "***" : value;
+  });
+}
+
 /**
  * HTTP client for Jellyfin Music Daemon API
  */
@@ -134,7 +142,7 @@ export class MusicDaemonClient {
       // Log the request
       this.logger?.debug(`${method} ${url}`);
       if (body) {
-        this.logger?.debug(`  Body: ${JSON.stringify(body)}`);
+        this.logger?.debug(`  Body: ${serializeLogBody(body)}`);
       }
       this.logger?.debug(`  Auth: ${this.password ? "Bearer ***" : "none"}`);
 

@@ -2,13 +2,18 @@
  * Abstraction for audio playback backends
  * Separates audio player implementation (ffplay, mpv, vlc, etc.) from business logic
  */
+export interface PlaybackSource {
+  url: string;
+  headers?: Record<string, string>;
+}
+
 export interface PlaybackBackend {
   /**
-   * Start playing a URL
-   * @param url Stream URL to play
+   * Start playing a stream source
+   * @param source Stream location and optional request headers
    * @throws PlaybackError if startup fails
    */
-  play(url: string): Promise<void>;
+  play(source: PlaybackSource): Promise<void>;
 
   /**
    * Pause playback

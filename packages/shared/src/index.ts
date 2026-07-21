@@ -92,5 +92,8 @@ export type { QueueState } from "./state-storage";
 // Queue items
 export { createJellyfinQueueItems } from "./queue-items";
 
+// Credential redaction
+export { isCredentialKey } from "./credential-redaction";
+
 // Constants
 export * from "./constants";
