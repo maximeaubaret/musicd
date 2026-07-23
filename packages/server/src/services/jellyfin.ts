@@ -91,6 +91,21 @@ const JellyfinItemsResponseSchema = z.object({
     .transform((value) => value ?? []),
 });
 
+const JellyfinItemsPageSchema = z.object({
+  Items: z
+    .array(JellyfinItemSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+  TotalRecordCount: OptionalFiniteNumberSchema,
+});
+
+export type BrowseKind = "albums" | "artists" | "songs";
+
+export interface BrowsePage {
+  items: JellyfinItem[];
+  total: number;
+}
+
 class JellyfinResponseError extends JellyfinError {}
 
 async function parseJellyfinResponse<Schema extends z.ZodTypeAny>(
@@ -362,8 +377,11 @@ export class JellyfinService {
       );
       const searchHints = result.SearchHints;
 
-      // Map SearchHint results to JellyfinItem format
-      let items: JellyfinItem[] = searchHints.map((hint) => ({
+      // Map SearchHint results to JellyfinItem format. This is deliberately a
+      // single Jellyfin round-trip: expanding matched artists into their
+      // albums here used to add one request per artist on every query, and
+      // clients that want an artist's discography can drill down explicitly.
+      const items: JellyfinItem[] = searchHints.map((hint) => ({
         Id: hint.Id,
         Name: hint.Name,
         Type: hint.Type,
@@ -374,91 +392,12 @@ export class JellyfinService {
         ProductionYear: hint.ProductionYear,
       }));
 
-      // Step 2: If we found any artists, also fetch their albums
-      const artistIds = items
-        .filter((item) => item.Type === "MusicArtist")
-        .map((item) => item.Id);
-
-      if (artistIds.length > 0) {
-        // Fetch albums for each artist found
-        const artistAlbumsPromises = artistIds.map((artistId) =>
-          this.getItemsByArtist(artistId, "MusicAlbum"),
-        );
-
-        const artistAlbumsArrays = await Promise.all(artistAlbumsPromises);
-        const artistAlbums = artistAlbumsArrays.flat();
-
-        // Deduplicate: add albums that aren't already in the results
-        const existingIds = new Set(items.map((item) => item.Id));
-        const newAlbums = artistAlbums.filter(
-          (album) => !existingIds.has(album.Id),
-        );
-
-        items = [...items, ...newAlbums];
-      }
-
-      // Limit final results
       return items.slice(0, limit);
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
       }
       throw new JellyfinError(`Error searching items: ${error}`);
-    }
-  }
-
-  /**
-   * Get items by artist ID
-   */
-  private async getItemsByArtist(
-    artistId: string,
-    itemType: string,
-  ): Promise<JellyfinItem[]> {
-    try {
-      const params = new URLSearchParams({
-        artistIds: artistId,
-        includeItemTypes: itemType,
-        recursive: "true",
-        userId: this.userId!,
-      });
-
-      const response = await this.loggedFetch(
-        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
-        {
-          headers: this.getHeaders(),
-        },
-      );
-
-      if (!response.ok) {
-        throw new JellyfinError(
-          `Failed to get items by artist: ${response.statusText}`,
-          response.status,
-        );
-      }
-
-      const result = await parseJellyfinResponse(
-        response,
-        JellyfinItemsResponseSchema,
-        "fetching artist items for search",
-      );
-      const items = result.Items;
-
-      return items.map((item) => ({
-        Id: item.Id,
-        Name: item.Name,
-        Type: item.Type,
-        Artists: item.Artists || [],
-        Album: item.Album,
-        AlbumArtist: item.AlbumArtist,
-        RunTimeTicks: item.RunTimeTicks,
-      }));
-    } catch (error) {
-      if (error instanceof JellyfinResponseError) {
-        throw error;
-      }
-      // Don't fail the whole search if artist items fetch fails
-      logger.error("Error fetching items by artist:", error);
-      return [];
     }
   }
 
@@ -633,6 +572,120 @@ export class JellyfinService {
       url: streamUrl.toString(),
       headers: { "X-MediaBrowser-Token": accessToken },
     };
+  }
+
+  /**
+   * Browse the library alphabetically, one page at a time.
+   * Albums and songs go through the user Items endpoint; artists use
+   * Jellyfin's dedicated AlbumArtists endpoint so only artists with albums
+   * in the music library appear.
+   */
+  async browse(
+    kind: BrowseKind,
+    startIndex: number = 0,
+    limit: number = 100,
+  ): Promise<BrowsePage> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const params = new URLSearchParams({
+        userId: this.userId!,
+        // Albums group by artist first so one artist's discography sits
+        // together; artists and songs stay purely alphabetical.
+        sortBy: kind === "albums" ? "AlbumArtist,SortName" : "SortName",
+        sortOrder: "Ascending",
+        startIndex: startIndex.toString(),
+        limit: limit.toString(),
+        recursive: "true",
+      });
+
+      let url: string;
+      if (kind === "artists") {
+        url = `${this.config.serverUrl}/Artists/AlbumArtists?${params}`;
+      } else {
+        params.set(
+          "includeItemTypes",
+          kind === "albums" ? "MusicAlbum" : "Audio",
+        );
+        url = `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`;
+      }
+
+      const response = await this.loggedFetch(url, {
+        headers: this.getHeaders(),
+      });
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to browse ${kind}: ${response.statusText}`,
+          response.status,
+        );
+      }
+
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsPageSchema,
+        `browsing ${kind}`,
+      );
+
+      return {
+        items: result.Items,
+        total: result.TotalRecordCount ?? result.Items.length,
+      };
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error browsing ${kind}: ${error}`);
+    }
+  }
+
+  /**
+   * Fetch an item's primary artwork from Jellyfin.
+   * Jellyfin resolves audio items to their album's primary image, so a track
+   * ID is enough. Returns the upstream Response so callers can stream the
+   * image body without buffering it.
+   */
+  async getArtwork(itemId: string, maxWidth: number = 256): Promise<Response> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    const artworkUrl = new URL(
+      `/Items/${itemId}/Images/Primary`,
+      this.config.serverUrl,
+    );
+    artworkUrl.search = new URLSearchParams({
+      maxWidth: String(maxWidth),
+      quality: "90",
+    }).toString();
+
+    const response = await this.loggedFetch(artworkUrl.toString(), {
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new JellyfinError(
+        `Artwork not available for item ${itemId}`,
+        response.status === 404 ? 404 : 502,
+      );
+    }
+
+    return response;
   }
 
   /**

@@ -67,6 +67,7 @@ const QueueModeSchema = z.object({
   loop: z.boolean(),
   random: z.boolean(),
 });
+const VolumeSchema = z.number().finite().min(0).max(100);
 
 const QueueStateV1Schema = z.object({
   queue: z.array(
@@ -90,6 +91,7 @@ const QueueStateV3Schema = z.object({
   queue: z.array(QueueItemSchema),
   queuePosition: QueuePositionSchema,
   queueMode: QueueModeSchema,
+  volume: VolumeSchema.optional().default(100),
   savedAt: SavedAtSchema,
   version: z.literal(CURRENT_STATE_VERSION),
 });
@@ -120,6 +122,7 @@ export interface QueueState {
   queue: QueueItem[];
   queuePosition: number;
   queueMode: QueueMode;
+  volume: number;
   savedAt: number;
   version: typeof CURRENT_STATE_VERSION;
 }
@@ -131,11 +134,13 @@ export function saveQueueState(
   queue: QueueItem[],
   position: number,
   queueMode: QueueMode = { loop: false, random: false },
+  volume: number = 100,
 ): void {
   const data: QueueState = {
     queue,
     queuePosition: position,
     queueMode,
+    volume,
     savedAt: Date.now(),
     version: CURRENT_STATE_VERSION,
   };
@@ -168,6 +173,7 @@ function migrateV1toV3(parsed: z.infer<typeof QueueStateV1Schema>): QueueState {
     queue: migratedQueue,
     queuePosition: parsed.queuePosition,
     queueMode: { ...DEFAULT_QUEUE_MODE },
+    volume: 100,
     savedAt: parsed.savedAt,
     version: CURRENT_STATE_VERSION,
   };
@@ -181,6 +187,7 @@ function migrateV2toV3(parsed: z.infer<typeof QueueStateV2Schema>): QueueState {
     queue: parsed.queue,
     queuePosition: parsed.queuePosition,
     queueMode: { ...DEFAULT_QUEUE_MODE },
+    volume: 100,
     savedAt: parsed.savedAt,
     version: CURRENT_STATE_VERSION,
   };
@@ -192,7 +199,12 @@ function migrateV2toV3(parsed: z.infer<typeof QueueStateV2Schema>): QueueState {
  */
 function resaveMigratedState(state: QueueState): QueueState {
   try {
-    saveQueueState(state.queue, state.queuePosition, state.queueMode);
+    saveQueueState(
+      state.queue,
+      state.queuePosition,
+      state.queueMode,
+      state.volume,
+    );
   } catch {
     // Non-fatal: migration still works in memory even if re-save fails
   }

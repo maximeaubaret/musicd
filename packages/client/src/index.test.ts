@@ -313,3 +313,39 @@ describe("MusicDaemonClient queue modes", () => {
     expect(requests[1].method).toBe("GET");
   });
 });
+
+describe("MusicDaemonClient volume", () => {
+  test("gets and sets native playback volume", async () => {
+    const requests: Request[] = [];
+    const fetchMock = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+        requests.push(request);
+        const volume =
+          request.method === "POST"
+            ? ((await request.clone().json()) as { volume: number }).volume
+            : 70;
+        return Response.json({ success: true, volume });
+      },
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    expect(await client.getVolume()).toEqual({ success: true, volume: 70 });
+    expect(await client.setVolume(45)).toEqual({
+      success: true,
+      volume: 45,
+    });
+    expect(requests.map((request) => request.method)).toEqual(["GET", "POST"]);
+    expect(
+      requests.every(
+        (request) => new URL(request.url).pathname === "/api/volume",
+      ),
+    ).toBe(true);
+  });
+});

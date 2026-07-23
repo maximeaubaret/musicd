@@ -125,8 +125,10 @@ function failIfCalled(): never {
 
 const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
+  browse: failIfCalled,
   getAlbumTracks: failIfCalled,
   getArtistTracks: failIfCalled,
+  getArtwork: failIfCalled,
   getItem: async (id) => {
     const item = itemsById[id];
     if (!item) {

@@ -21,6 +21,7 @@ export function restorePersistedQueueState(
     queue: savedState.queue,
     position: savedState.queuePosition,
     queueMode: savedState.queueMode,
+    volume: savedState.volume,
   });
   return savedState;
 }

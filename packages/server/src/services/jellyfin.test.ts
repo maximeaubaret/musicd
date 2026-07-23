@@ -186,20 +186,19 @@ describe("JellyfinService search responses", () => {
     expect(error.message).toContain("SearchHints.0.Name");
   });
 
-  test("rejects malformed artist items fetched while searching", async () => {
+  test("search is a single Jellyfin round-trip even when artists match", async () => {
+    // mockJsonResponses throws on any request beyond those provided, so a
+    // lone response proves matched artists trigger no follow-up fetches.
     mockJsonResponses([
       {
         SearchHints: [{ Id: "artist-1", Name: "Artist", Type: "MusicArtist" }],
       },
-      { Items: [{ Id: "album-1", Type: "MusicAlbum" }] },
     ]);
     const service = createAuthenticatedService();
 
-    const error = await captureError(() => service.search("artist"));
+    const results = await service.search("artist");
 
-    expect(error).toBeInstanceOf(JellyfinError);
-    expect(error.message).toContain("fetching artist items for search");
-    expect(error.message).toContain("Items.0.Name");
+    expect(results.map((item) => item.Id)).toEqual(["artist-1"]);
   });
 });
 

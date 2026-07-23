@@ -15,6 +15,8 @@ A lightweight daemon that plays music from a [Jellyfin](https://jellyfin.org) se
 
 - Stream music from Jellyfin
 - Queue management with persistent loop and random modes
+- Library browsing, artwork proxying, search, and seeking
+- Optional mpv backend with gapless seeking and native persistent volume
 - Optional YouTube playback through `yt-dlp`
 - REST API for integration
 - CLI with interactive search
@@ -23,7 +25,7 @@ A lightweight daemon that plays music from a [Jellyfin](https://jellyfin.org) se
 ## Requirements
 
 - Linux (x64 or ARM64)
-- [ffplay](https://ffmpeg.org/) for audio playback (`sudo apt install ffmpeg`)
+- [ffplay](https://ffmpeg.org/) or [mpv](https://mpv.io/) for audio playback
 - Access to a Jellyfin server
 - Optional: [yt-dlp](https://github.com/yt-dlp/yt-dlp) for YouTube playback
 
@@ -190,12 +192,12 @@ musicd --json queue loop on
 musicd uses the XDG base directories. Defaults are shown below; setting
 `XDG_CONFIG_HOME` or `XDG_DATA_HOME` relocates the corresponding files.
 
-| File                               | Purpose                                      |
-| ---------------------------------- | -------------------------------------------- |
-| `~/.config/musicd/server.json`     | Daemon and Jellyfin server configuration     |
-| `~/.config/musicd/cli.json`        | CLI connection profiles                      |
-| `~/.local/share/musicd/auth.json`  | Validated Jellyfin access token and identity |
-| `~/.local/share/musicd/queue.json` | Queue, position, and loop/random state (v3)  |
+| File                               | Purpose                                       |
+| ---------------------------------- | --------------------------------------------- |
+| `~/.config/musicd/server.json`     | Daemon and Jellyfin server configuration      |
+| `~/.config/musicd/cli.json`        | CLI connection profiles                       |
+| `~/.local/share/musicd/auth.json`  | Validated Jellyfin access token and identity  |
+| `~/.local/share/musicd/queue.json` | Queue, position, modes, and volume state (v3) |
 
 Authentication state is not stored in `server.json`, the working directory, or a
 `.jellyfin-auth.json` file. Sensitive setup files are created with owner-only file
@@ -214,7 +216,8 @@ permissions.
     "password": "optional-api-password"
   },
   "audio": {
-    "device": "default"
+    "device": "default",
+    "backend": "mpv"
   },
   "state": {
     "restoreQueue": true
@@ -223,8 +226,10 @@ permissions.
 ```
 
 The daemon defaults are host `127.0.0.1`, port `8765`, audio device `default`,
-and queue restoration enabled. The daemon listener speaks HTTP; use a reverse
-proxy for remote HTTPS as described under [Remote use](#remote-use).
+the `ffplay` backend, and queue restoration enabled. Select `mpv` for native
+in-place seeking, pause, decoder-clock position tracking, and per-stream volume.
+The daemon listener speaks HTTP; use a reverse proxy for remote HTTPS as
+described under [Remote use](#remote-use).
 
 ### CLI configuration
 
@@ -314,13 +319,13 @@ sent without transport encryption. Remote unauthenticated HTTP is not blocked,
 but it provides neither confidentiality nor access control and is not recommended.
 
 Debug logs redact daemon passwords, Jellyfin passwords and tokens, authorization
-headers, and credential-bearing query parameters. For Jellyfin playback, the
-daemon fetches the stream with the token in an HTTP header and pipes the response
-body to ffplay standard input, keeping the token out of ffplay's command line. The
-token still exists in daemon memory and outbound request metadata; use HTTPS for
-remote Jellyfin servers and restrict access to the daemon account. Prefer a
-password in a CLI profile over `--password`, because command-line arguments can be
-visible to local process inspection tools.
+headers, and credential-bearing query parameters. Jellyfin streams are passed to
+the selected player as seekable URLs with the token in an HTTP header. This makes
+MP4-family files with indexes at the end playable, but the header is visible to
+local process-argument inspection even though musicd redacts it from logs. Use
+HTTPS for remote Jellyfin servers and restrict local process inspection. Prefer a
+password in a CLI profile over `--password`, because command-line arguments can
+also be visible to local process inspection tools.
 
 ## REST API
 
@@ -337,6 +342,9 @@ exposes only the public health endpoint and setup authentication endpoint.
 | POST   | `/api/pause`                 | Pause playback                                             |
 | POST   | `/api/resume`                | Resume playback                                            |
 | POST   | `/api/stop`                  | Stop playback                                              |
+| POST   | `/api/seek`                  | Seek with `{ "position": seconds }`                        |
+| GET    | `/api/volume`                | Get native playback volume                                 |
+| POST   | `/api/volume`                | Set `{ "volume": 0..100 }`                                 |
 | GET    | `/api/status`                | Playback, queue, position, and queue modes                 |
 | POST   | `/api/queue/add`             | Resolve and add one or more queue items                    |
 | GET    | `/api/queue`                 | Get the queue and active position                          |
@@ -353,6 +361,8 @@ exposes only the public health endpoint and setup authentication endpoint.
 | GET    | `/api/search?q=...&limit=20` | Search music (`limit` is `1` to `100`)                     |
 | GET    | `/api/album/:id`             | Get album metadata and tracks                              |
 | GET    | `/api/artist/:id`            | Get artist metadata and tracks                             |
+| GET    | `/api/library/:kind`         | Browse albums, artists, or songs with pagination           |
+| GET    | `/api/artwork/:id`           | Stream proxied Jellyfin artwork                            |
 
 `POST /api/queue/add` accepts this body:
 

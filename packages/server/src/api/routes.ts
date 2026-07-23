@@ -35,15 +35,58 @@ const QueueAddRequestSchema = z.object({
   playNow: z.boolean().optional().default(false),
 });
 
+const SeekRequestSchema = z.object({
+  position: z
+    .number()
+    .finite()
+    .min(0, "position must be a non-negative number"),
+});
+
+const VolumeRequestSchema = z.object({
+  volume: z.number().finite().min(0).max(100),
+});
+
 const QueueModeRequestSchema = z.object({
   loop: z.boolean().optional(),
   random: z.boolean().optional(),
 });
 
+const ArtworkItemIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9-]+$/, "Invalid item ID");
+
+const BrowseKindSchema = z.enum(["albums", "artists", "songs"]);
+
+const BrowseStartIndexStringSchema = z
+  .string()
+  .regex(/^\d+$/)
+  .transform(Number)
+  .refine((value) => value >= 0 && Number.isSafeInteger(value), {
+    message: "startIndex must be a non-negative integer",
+  });
+
+const BrowseLimitStringSchema = z
+  .string()
+  .regex(/^\d+$/)
+  .transform(Number)
+  .refine((value) => value >= 1 && value <= 200, {
+    message: "limit must be between 1 and 200",
+  });
+
+const ArtworkWidthStringSchema = z
+  .string()
+  .regex(/^\d+$/)
+  .transform(Number)
+  .refine((value) => value >= 16 && value <= 2048, {
+    message: "maxWidth must be between 16 and 2048",
+  });
+
 export interface ApiJellyfinService {
   authenticate: JellyfinService["authenticate"];
+  browse: JellyfinService["browse"];
   getAlbumTracks: JellyfinService["getAlbumTracks"];
   getArtistTracks: JellyfinService["getArtistTracks"];
+  getArtwork: JellyfinService["getArtwork"];
   getItem: JellyfinService["getItem"];
   search: JellyfinService["search"];
 }
@@ -58,6 +101,7 @@ export interface ApiPlayerService {
   getQueue: PlayerService["getQueue"];
   getQueuePosition: PlayerService["getQueuePosition"];
   getStatus: PlayerService["getStatus"];
+  getVolume: PlayerService["getVolume"];
   isPlaying: PlayerService["isPlaying"];
   pause: PlayerService["pause"];
   play: PlayerService["play"];
@@ -66,6 +110,8 @@ export interface ApiPlayerService {
   playPrevious: PlayerService["playPrevious"];
   removeFromQueue: PlayerService["removeFromQueue"];
   resume: PlayerService["resume"];
+  seek: PlayerService["seek"];
+  setVolume: PlayerService["setVolume"];
   stop: PlayerService["stop"];
 }
 
@@ -155,7 +201,9 @@ async function parseJsonRequestBody(
 
 /**
  * Authentication middleware for Bearer token validation
- * Validates the Authorization header against the configured daemon password
+ * Validates the Authorization header against the configured daemon password.
+ * Also accepts the password as an `api_key` query parameter for clients that
+ * cannot set request headers (e.g. image elements loading /artwork URLs).
  */
 export function createAuthMiddleware(
   requiredPassword?: string,
@@ -163,6 +211,17 @@ export function createAuthMiddleware(
   return (c: Context, next: Next) => {
     // If no password is configured, skip authentication
     if (!requiredPassword) {
+      return next();
+    }
+
+    const apiKey = c.req.query("api_key");
+    if (apiKey !== undefined) {
+      if (apiKey !== requiredPassword) {
+        return createUnauthorizedResponse(
+          c,
+          "Invalid authentication credentials.",
+        );
+      }
       return next();
     }
 
@@ -478,6 +537,108 @@ export function createApiRoutes(
         },
         500,
       );
+    }
+  });
+
+  /**
+   * POST /api/seek - Jump to a position (seconds) in the current track
+   */
+  app.post("/seek", async (c) => {
+    const bodyResult = await parseJsonRequestBody(c);
+    if (!bodyResult.success) {
+      return bodyResult.response;
+    }
+
+    const parsed = SeekRequestSchema.safeParse(bodyResult.body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          success: false,
+          error: "position must be a non-negative number",
+        },
+        400,
+      );
+    }
+
+    try {
+      await playerService.seek(parsed.data.position);
+
+      return c.json({
+        success: true,
+        message: `Seeked to ${parsed.data.position}s`,
+        position: parsed.data.position,
+      });
+    } catch (error) {
+      if (error instanceof PlayerError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          400,
+        );
+      }
+
+      console.error("Unexpected error in /seek:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Internal server error",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /api/volume - Read the native playback volume (0-100)
+   */
+  app.get("/volume", (c) => {
+    try {
+      return c.json({
+        success: true,
+        volume: playerService.getVolume(),
+      });
+    } catch (error) {
+      if (error instanceof PlayerError) {
+        return c.json({ success: false, error: error.message }, 400);
+      }
+      console.error("Unexpected error in GET /volume:", error);
+      return c.json({ success: false, error: "Internal server error" }, 500);
+    }
+  });
+
+  /**
+   * POST /api/volume - Set the native playback volume (0-100)
+   */
+  app.post("/volume", async (c) => {
+    const bodyResult = await parseJsonRequestBody(c);
+    if (!bodyResult.success) {
+      return bodyResult.response;
+    }
+
+    const parsed = VolumeRequestSchema.safeParse(bodyResult.body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          success: false,
+          error: "volume must be a number between 0 and 100",
+        },
+        400,
+      );
+    }
+
+    try {
+      return c.json({
+        success: true,
+        volume: playerService.setVolume(parsed.data.volume),
+      });
+    } catch (error) {
+      if (error instanceof PlayerError) {
+        return c.json({ success: false, error: error.message }, 400);
+      }
+      console.error("Unexpected error in POST /volume:", error);
+      return c.json({ success: false, error: "Internal server error" }, 500);
     }
   });
 
@@ -1142,8 +1303,11 @@ export function createApiRoutes(
         );
       }
 
-      // Get album metadata
-      const album = await jellyfinService.getItem(albumId);
+      // Metadata and tracks are independent Jellyfin calls; fetch together.
+      const [album, tracks] = await Promise.all([
+        jellyfinService.getItem(albumId),
+        jellyfinService.getAlbumTracks(albumId),
+      ]);
 
       if (album.Type !== "MusicAlbum") {
         return c.json(
@@ -1154,9 +1318,6 @@ export function createApiRoutes(
           400,
         );
       }
-
-      // Get all tracks from the album
-      const tracks = await jellyfinService.getAlbumTracks(albumId);
 
       return c.json({
         success: true,
@@ -1220,8 +1381,11 @@ export function createApiRoutes(
         );
       }
 
-      // Get artist metadata
-      const artist = await jellyfinService.getItem(artistId);
+      // Metadata and tracks are independent Jellyfin calls; fetch together.
+      const [artist, tracks] = await Promise.all([
+        jellyfinService.getItem(artistId),
+        jellyfinService.getArtistTracks(artistId),
+      ]);
 
       if (artist.Type !== "MusicArtist") {
         return c.json(
@@ -1232,9 +1396,6 @@ export function createApiRoutes(
           400,
         );
       }
-
-      // Get all tracks from the artist
-      const tracks = await jellyfinService.getArtistTracks(artistId);
 
       return c.json({
         success: true,
@@ -1273,6 +1434,172 @@ export function createApiRoutes(
         {
           success: false,
           error: "Failed to get artist tracks",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /library/:kind - Browse albums, artists, or songs alphabetically.
+   * Paginated via ?startIndex= and ?limit= (default 100, max 200).
+   */
+  app.get("/library/:kind", async (c) => {
+    try {
+      const kindResult = BrowseKindSchema.safeParse(c.req.param("kind"));
+      if (!kindResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: "Kind must be one of: albums, artists, songs",
+          },
+          400,
+        );
+      }
+
+      const startIndexStr = c.req.query("startIndex");
+      const startIndexResult =
+        startIndexStr === undefined
+          ? { success: true as const, data: 0 }
+          : BrowseStartIndexStringSchema.safeParse(startIndexStr);
+      if (!startIndexResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: "startIndex must be a non-negative integer",
+          },
+          400,
+        );
+      }
+
+      const limitStr = c.req.query("limit");
+      const limitResult =
+        limitStr === undefined
+          ? { success: true as const, data: 100 }
+          : BrowseLimitStringSchema.safeParse(limitStr);
+      if (!limitResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: "limit must be between 1 and 200",
+          },
+          400,
+        );
+      }
+
+      const page = await jellyfinService.browse(
+        kindResult.data,
+        startIndexResult.data,
+        limitResult.data,
+      );
+
+      return c.json({
+        success: true,
+        kind: kindResult.data,
+        startIndex: startIndexResult.data,
+        limit: limitResult.data,
+        total: page.total,
+        count: page.items.length,
+        items: page.items.map((item) => ({
+          id: item.Id,
+          name: item.Name,
+          type: item.Type,
+          artist: item.Artists?.[0] || item.AlbumArtist,
+          album: item.Album,
+          duration: item.RunTimeTicks
+            ? Math.floor(item.RunTimeTicks / 10000000)
+            : 0,
+          year: item.ProductionYear,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 400 | 401;
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          statusCode,
+        );
+      }
+
+      console.error("Error browsing library:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to browse library",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /artwork/:id - Stream an item's primary artwork from Jellyfin.
+   * Audio item IDs resolve to their album's primary image. Clients that
+   * cannot set headers (image elements) authenticate via ?api_key=.
+   */
+  app.get("/artwork/:id", async (c) => {
+    try {
+      const idResult = ArtworkItemIdSchema.safeParse(c.req.param("id"));
+      if (!idResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: "Invalid item ID",
+          },
+          400,
+        );
+      }
+
+      const maxWidthStr = c.req.query("maxWidth");
+      const maxWidthResult =
+        maxWidthStr === undefined
+          ? { success: true as const, data: 256 }
+          : ArtworkWidthStringSchema.safeParse(maxWidthStr);
+      if (!maxWidthResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: "maxWidth must be an integer between 16 and 2048",
+          },
+          400,
+        );
+      }
+
+      const upstream = await jellyfinService.getArtwork(
+        idResult.data,
+        maxWidthResult.data,
+      );
+      const artworkBody = upstream.body;
+      if (!artworkBody) {
+        throw new JellyfinError("Artwork response was empty", 502);
+      }
+
+      return c.body(artworkBody, 200, {
+        "Content-Type":
+          upstream.headers.get("Content-Type") ?? "application/octet-stream",
+        // Artwork rarely changes; let clients cache for a day.
+        "Cache-Control": "public, max-age=86400",
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 401 | 502;
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          statusCode,
+        );
+      }
+
+      console.error("Error fetching artwork:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to fetch artwork",
         },
         500,
       );

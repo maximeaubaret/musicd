@@ -85,18 +85,19 @@ function readPersistedState(): unknown {
 
 describe("state-storage", () => {
   describe("v3 save and load", () => {
-    test("preserves queue items, position, loop mode, and random mode", () => {
+    test("preserves queue items, position, modes, and volume", () => {
       const items = [
         createJellyfinQueueItem("jf-1", "Track 1"),
         createJellyfinQueueItem("jf-2", "Track 2"),
       ];
-      saveQueueState(items, 1, { loop: true, random: true });
+      saveQueueState(items, 1, { loop: true, random: true }, 43);
 
       const loaded = loadQueueState();
       expect(loaded).not.toBeNull();
       expect(loaded!.queue).toEqual(items);
       expect(loaded!.queuePosition).toBe(1);
       expect(loaded!.queueMode).toEqual({ loop: true, random: true });
+      expect(loaded!.volume).toBe(43);
       expect(loaded!.version).toBe(3);
     });
 
@@ -177,6 +178,7 @@ describe("state-storage", () => {
       expect(loaded!.version).toBe(3);
       expect(loaded!.queue).toHaveLength(2);
       expect(loaded!.queueMode).toEqual({ loop: false, random: false });
+      expect(loaded!.volume).toBe(100);
 
       // All items should now have source: "jellyfin"
       expect(loaded!.queue[0].source).toBe("jellyfin");

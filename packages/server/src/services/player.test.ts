@@ -1138,3 +1138,116 @@ describe("PlayerService", () => {
     });
   });
 });
+
+describe("PlayerService seek", () => {
+  let player: PlayerService;
+  let backend: MockBackend;
+
+  beforeEach(() => {
+    backend = new MockBackend();
+    player = new PlayerService(backend);
+    player.registerPlaybackSourceResolver("jellyfin", async (item) => ({
+      url: `http://test.local/stream/${item.id}`,
+    }));
+  });
+
+  test("restarts the current track at the requested offset", async () => {
+    addJellyfinItems(player, createMockQueue(2));
+    await player.playFromQueue(0);
+
+    await player.seek(92.5);
+
+    expect(player.isPlaying()).toBe(true);
+    expect(player.getQueuePosition()).toBe(0);
+    expect(backend.getPosition()).toBe(92.5);
+  });
+
+  test("seeking while paused resumes at the new position", async () => {
+    addJellyfinItems(player, createMockQueue(1));
+    await player.playFromQueue(0);
+    player.pause();
+
+    await player.seek(30);
+
+    expect(player.isPlaying()).toBe(true);
+    expect(backend.isPaused()).toBe(false);
+    expect(backend.getPosition()).toBe(30);
+  });
+
+  test("rejects seeking when nothing is playing", async () => {
+    addJellyfinItems(player, createMockQueue(1));
+
+    await expect(player.seek(10)).rejects.toThrow("Nothing is playing");
+  });
+});
+
+describe("PlayerService native backend seek", () => {
+  class SeekableMockBackend extends MockBackend {
+    seekCalls: number[] = [];
+
+    async seek(position: number): Promise<void> {
+      this.seekCalls.push(position);
+    }
+  }
+
+  test("delegates to the backend without restarting playback", async () => {
+    const backend = new SeekableMockBackend();
+    const player = new PlayerService(backend);
+    let resolutions = 0;
+    player.registerPlaybackSourceResolver("jellyfin", async (item) => {
+      resolutions += 1;
+      return { url: `http://test.local/stream/${item.id}` };
+    });
+
+    addJellyfinItems(player, createMockQueue(1));
+    await player.playFromQueue(0);
+    player.pause();
+
+    await player.seek(45);
+
+    expect(backend.seekCalls).toEqual([45]);
+    // In-place seek: no re-resolution, pause preserved, queue unchanged.
+    expect(resolutions).toBe(1);
+    expect(backend.isPaused()).toBe(true);
+    expect(player.getQueuePosition()).toBe(0);
+  });
+});
+
+describe("PlayerService native volume", () => {
+  test("updates the backend and triggers state persistence", () => {
+    const backend = new MockBackend();
+    const player = new PlayerService(backend);
+    let saves = 0;
+    player.enableStatePersistence(() => {
+      saves += 1;
+    });
+
+    expect(player.getVolume()).toBe(100);
+    expect(player.setVolume(42)).toBe(42);
+    expect(player.getVolume()).toBe(42);
+    expect(player.getQueueState().volume).toBe(42);
+    expect(saves).toBe(1);
+  });
+
+  test("restores volume before playback starts", async () => {
+    const backend = new MockBackend();
+    const player = new PlayerService(backend);
+    player.restoreQueueState({
+      queue: [],
+      position: -1,
+      volume: 28,
+    });
+
+    expect(player.getVolume()).toBe(28);
+  });
+
+  test("rejects invalid volume values", () => {
+    const player = new PlayerService(new MockBackend());
+
+    for (const volume of [-1, 101, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => player.setVolume(volume)).toThrow(
+        "Volume must be between 0 and 100",
+      );
+    }
+  });
+});

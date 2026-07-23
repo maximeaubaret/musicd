@@ -11,7 +11,7 @@ import {
 import { JellyfinService } from "./services/jellyfin";
 import { YouTubeService } from "./services/youtube";
 import { PlayerService } from "./services/player";
-import { FFPlayBackend } from "./services/playback";
+import { FFPlayBackend, MpvBackend } from "./services/playback";
 import { createApp } from "./app";
 import { logger } from "./logger";
 import { restorePersistedQueueState } from "./queue-state";
@@ -83,6 +83,7 @@ async function main() {
   console.log(
     `  - Audio device: ${config.audio?.device || DEFAULT_AUDIO_DEVICE}`,
   );
+  console.log(`  - Audio backend: ${config.audio?.backend ?? "ffplay"}`);
   if (config.daemon.password) {
     console.log(`  - Authentication: enabled (password required)`);
   } else {
@@ -92,10 +93,17 @@ async function main() {
   // Initialize services
   const jellyfinService = new JellyfinService(config.jellyfin);
   const youtubeService = new YouTubeService();
-  const backend = new FFPlayBackend(
-    config.audio?.device || DEFAULT_AUDIO_DEVICE,
-    logger.isEnabled(),
-  );
+  const audioBackend = config.audio?.backend ?? "ffplay";
+  const backend =
+    audioBackend === "mpv"
+      ? new MpvBackend(
+          config.audio?.device || DEFAULT_AUDIO_DEVICE,
+          logger.isEnabled(),
+        )
+      : new FFPlayBackend(
+          config.audio?.device || DEFAULT_AUDIO_DEVICE,
+          logger.isEnabled(),
+        );
   const playerService = new PlayerService(backend);
 
   // Check yt-dlp availability (non-fatal)
@@ -139,7 +147,12 @@ async function main() {
     playerService.enableStatePersistence(() => {
       const state = playerService.getQueueState();
       try {
-        saveQueueState(state.queue, state.position, state.queueMode);
+        saveQueueState(
+          state.queue,
+          state.position,
+          state.queueMode,
+          state.volume,
+        );
         logger.debug("Queue state saved");
       } catch (error) {
         console.error("Failed to save queue state:", error);
@@ -236,6 +249,11 @@ async function main() {
     `  POST /api/play                - Play an item (Jellyfin ID or YouTube URL)`,
   );
   console.log(`  POST /api/stop                - Stop playback`);
+  console.log(
+    `  POST /api/seek                - Seek within the current track`,
+  );
+  console.log(`  GET  /api/volume              - Get playback volume`);
+  console.log(`  POST /api/volume              - Set playback volume`);
   console.log(`  GET  /api/status              - Get playback status`);
   console.log(
     `  POST /api/queue/add           - Add items to queue (Jellyfin IDs or YouTube URLs)`,
@@ -246,6 +264,8 @@ async function main() {
   console.log(`  POST /api/queue/previous      - Go to previous song`);
   console.log(`  POST /api/queue/play/:index   - Play from queue position`);
   console.log(`  POST /api/queue/remove/:index - Remove item from queue`);
+  console.log(`  GET  /api/library/:kind       - Browse albums/artists/songs`);
+  console.log(`  GET  /api/artwork/:id         - Stream item artwork`);
   console.log(`  GET  /api/health              - Check daemon health`);
   console.log("\nPress Ctrl+C to stop");
 
@@ -257,7 +277,12 @@ async function main() {
     if (shouldRestoreQueue) {
       try {
         const state = playerService.getQueueState();
-        saveQueueState(state.queue, state.position, state.queueMode);
+        saveQueueState(
+          state.queue,
+          state.position,
+          state.queueMode,
+          state.volume,
+        );
         console.log("✓ Saved queue state");
       } catch (error) {
         console.error("✗ Failed to save queue state:", error);

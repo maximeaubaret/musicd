@@ -5,6 +5,11 @@
 export interface PlaybackSource {
   url: string;
   headers?: Record<string, string>;
+  /**
+   * Start playback this many seconds into the stream. Backends that cannot
+   * reposition a live pipeline implement this at spawn time (ffplay -ss).
+   */
+  startPosition?: number;
 }
 
 export interface PlaybackBackend {
@@ -47,6 +52,21 @@ export interface PlaybackBackend {
    * Get current playback position in seconds
    */
   getPosition(): number;
+
+  /**
+   * Optional: seek in place to an absolute position (seconds) without
+   * restarting the pipeline. Backends without this capability omit it and
+   * callers fall back to restarting playback at the target offset.
+   */
+  seek?(positionSeconds: number): Promise<void>;
+
+  /**
+   * Optional native per-stream volume support, expressed as a percentage.
+   * Backends retain the selected value while stopped and apply it to each
+   * newly-created playback process.
+   */
+  getVolume?(): number;
+  setVolume?(volumePercent: number): void;
 
   /**
    * Register callback for when track completes naturally

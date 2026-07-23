@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { APP_VERSION } from "@musicd/shared";
+import { APP_VERSION, JellyfinError, PlayerError } from "@musicd/shared";
 
 import { createApp } from "../app";
 import { MockBackend } from "../services/playback/mock-backend";
@@ -20,8 +20,10 @@ function failIfCalled(): never {
 
 const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
+  browse: failIfCalled,
   getAlbumTracks: failIfCalled,
   getArtistTracks: failIfCalled,
+  getArtwork: failIfCalled,
   getItem: failIfCalled,
   search: failIfCalled,
 };
@@ -37,6 +39,7 @@ const playerService = {
   getQueueMode: failIfCalled,
   getQueuePosition: failIfCalled,
   getStatus: failIfCalled,
+  getVolume: failIfCalled,
   isPlaying: failIfCalled,
   pause: failIfCalled,
   play: failIfCalled,
@@ -45,6 +48,8 @@ const playerService = {
   playPrevious: failIfCalled,
   removeFromQueue: failIfCalled,
   resume: failIfCalled,
+  seek: failIfCalled,
+  setVolume: failIfCalled,
   setQueueMode: failIfCalled,
   shuffleQueue: failIfCalled,
   stop: failIfCalled,
@@ -162,6 +167,9 @@ describe("API authentication", () => {
       ["POST", "/api/pause"],
       ["POST", "/api/resume"],
       ["POST", "/api/stop"],
+      ["POST", "/api/seek"],
+      ["GET", "/api/volume"],
+      ["POST", "/api/volume"],
       ["GET", "/api/status"],
       ["POST", "/api/queue/add"],
       ["GET", "/api/queue"],
@@ -178,6 +186,8 @@ describe("API authentication", () => {
       ["GET", "/api/search?q=test"],
       ["GET", "/api/album/id"],
       ["GET", "/api/artist/id"],
+      ["GET", "/api/artwork/id"],
+      ["GET", "/api/library/albums"],
     ] as const;
 
     for (const [method, path] of endpoints) {
@@ -208,6 +218,24 @@ describe("API authentication", () => {
       queue: [],
       position: -1,
       count: 0,
+    });
+  });
+
+  test("api_key query parameter authenticates in place of the Bearer header", async () => {
+    const app = createTestApp({
+      ...playerService,
+      getQueue: () => [],
+      getQueuePosition: () => -1,
+    });
+
+    const authorized = await app.request("/api/queue?api_key=secret");
+    expect(authorized.status).toBe(200);
+
+    const wrongKey = await app.request("/api/queue?api_key=wrong");
+    expect(wrongKey.status).toBe(401);
+    expect(await wrongKey.json()).toEqual({
+      success: false,
+      error: "Invalid authentication credentials.",
     });
   });
 
@@ -666,5 +694,325 @@ describe("API integer input validation", () => {
       expect(response.status).toBe(200);
     }
     expect(acceptedLimits).toEqual([1, 100]);
+  });
+});
+
+describe("GET /api/artwork/:id", () => {
+  function createArtworkApp(getArtwork: ApiJellyfinService["getArtwork"]) {
+    return createApp({
+      jellyfinService: { ...jellyfinService, getArtwork },
+      youtubeService,
+      playerService,
+      clock,
+      startTime: 1_000,
+      daemonPassword: "secret",
+      ytDlpAvailable: false,
+    });
+  }
+
+  test("streams upstream artwork with content type and cache headers", async () => {
+    const requestedWidths: number[] = [];
+    const app = createArtworkApp((itemId, maxWidth) => {
+      expect(itemId).toBe("abc123");
+      requestedWidths.push(maxWidth ?? -1);
+      return Promise.resolve(
+        new Response(new Uint8Array([1, 2, 3]), {
+          headers: { "Content-Type": "image/jpeg" },
+        }),
+      );
+    });
+
+    const response = await app.request("/api/artwork/abc123?api_key=secret");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(response.headers.get("Cache-Control")).toBe("public, max-age=86400");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+    expect(requestedWidths).toEqual([256]);
+  });
+
+  test("passes an explicit maxWidth through to the service", async () => {
+    const requestedWidths: number[] = [];
+    const app = createArtworkApp((_itemId, maxWidth) => {
+      requestedWidths.push(maxWidth ?? -1);
+      return Promise.resolve(new Response(new Uint8Array([1])));
+    });
+
+    const response = await app.request(
+      "/api/artwork/abc123?api_key=secret&maxWidth=512",
+    );
+
+    expect(response.status).toBe(200);
+    expect(requestedWidths).toEqual([512]);
+  });
+
+  test("rejects malformed ids and out-of-range widths", async () => {
+    const app = createArtworkApp(failIfCalled);
+
+    const badId = await app.request("/api/artwork/..%2Fescape?api_key=secret");
+    expect(badId.status).toBe(400);
+
+    for (const width of ["0", "4096", "abc", "-1"]) {
+      const response = await app.request(
+        `/api/artwork/abc123?api_key=secret&maxWidth=${width}`,
+      );
+      expect(response.status).toBe(400);
+    }
+  });
+
+  test("maps missing artwork to a JSON 404", async () => {
+    const app = createArtworkApp(() => {
+      return Promise.reject(
+        new JellyfinError("Artwork not available for item abc123", 404),
+      );
+    });
+
+    const response = await app.request("/api/artwork/abc123?api_key=secret");
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      success: false,
+      error: "Artwork not available for item abc123",
+    });
+  });
+});
+
+describe("GET /api/library/:kind", () => {
+  function createBrowseApp(browse: ApiJellyfinService["browse"]) {
+    return createApp({
+      jellyfinService: { ...jellyfinService, browse },
+      youtubeService,
+      playerService,
+      clock,
+      startTime: 1_000,
+      daemonPassword: "secret",
+      ytDlpAvailable: false,
+    });
+  }
+
+  test("returns a mapped page with pagination metadata", async () => {
+    const calls: Array<[string, number, number]> = [];
+    const app = createBrowseApp((kind, startIndex, limit) => {
+      calls.push([kind, startIndex ?? -1, limit ?? -1]);
+      return Promise.resolve({
+        items: [createAudioItem("song-1", "First Song")],
+        total: 1234,
+      });
+    });
+
+    const response = await app.request(
+      "/api/library/songs?startIndex=200&limit=50",
+      { headers: { Authorization: "Bearer secret" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      kind: "songs",
+      startIndex: 200,
+      limit: 50,
+      total: 1234,
+      count: 1,
+      items: [
+        {
+          id: "song-1",
+          name: "First Song",
+          type: "Audio",
+          artist: "Test Artist",
+          album: "Test Album",
+          duration: 180,
+        },
+      ],
+    });
+    expect(calls).toEqual([["songs", 200, 50]]);
+  });
+
+  test("defaults to startIndex 0 and limit 100", async () => {
+    const calls: Array<[number, number]> = [];
+    const app = createBrowseApp((_kind, startIndex, limit) => {
+      calls.push([startIndex ?? -1, limit ?? -1]);
+      return Promise.resolve({ items: [], total: 0 });
+    });
+
+    const response = await app.request("/api/library/albums", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([[0, 100]]);
+  });
+
+  test("rejects unknown kinds and malformed pagination", async () => {
+    const app = createBrowseApp(failIfCalled);
+
+    const badKind = await app.request("/api/library/podcasts", {
+      headers: { Authorization: "Bearer secret" },
+    });
+    expect(badKind.status).toBe(400);
+
+    for (const query of [
+      "startIndex=-1",
+      "startIndex=abc",
+      "limit=0",
+      "limit=201",
+    ]) {
+      const response = await app.request(`/api/library/albums?${query}`, {
+        headers: { Authorization: "Bearer secret" },
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+});
+
+describe("POST /api/seek", () => {
+  function createSeekApp(seek: ApiPlayerService["seek"]) {
+    return createTestApp({ ...playerService, seek });
+  }
+
+  test("passes the position through to the player", async () => {
+    const positions: number[] = [];
+    const app = createSeekApp(async (position) => {
+      positions.push(position);
+    });
+
+    const response = await app.request("/api/seek", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ position: 42.5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      message: "Seeked to 42.5s",
+      position: 42.5,
+    });
+    expect(positions).toEqual([42.5]);
+  });
+
+  test("rejects missing, negative, and non-numeric positions", async () => {
+    const app = createSeekApp(failIfCalled);
+
+    for (const body of ["{}", '{"position":-1}', '{"position":"abc"}', ""]) {
+      const response = await app.request("/api/seek", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret",
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  test("maps player errors to a 400", async () => {
+    const app = createSeekApp(async () => {
+      throw new PlayerError("Nothing is playing");
+    });
+
+    const response = await app.request("/api/seek", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ position: 5 }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      success: false,
+      error: "Nothing is playing",
+    });
+  });
+});
+
+describe("/api/volume", () => {
+  test("reads and updates native playback volume", async () => {
+    let volume = 72;
+    const app = createTestApp({
+      ...playerService,
+      getVolume: () => volume,
+      setVolume: (nextVolume) => {
+        volume = nextVolume;
+        return volume;
+      },
+    });
+
+    const getResponse = await app.request("/api/volume", {
+      headers: { Authorization: "Bearer secret" },
+    });
+    expect(getResponse.status).toBe(200);
+    expect(await getResponse.json()).toEqual({ success: true, volume: 72 });
+
+    const setResponse = await app.request("/api/volume", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ volume: 35.5 }),
+    });
+    expect(setResponse.status).toBe(200);
+    expect(await setResponse.json()).toEqual({
+      success: true,
+      volume: 35.5,
+    });
+  });
+
+  test("rejects invalid volume values", async () => {
+    const app = createTestApp();
+
+    for (const body of [
+      "{}",
+      '{"volume":-1}',
+      '{"volume":101}',
+      '{"volume":"50"}',
+      "",
+    ]) {
+      const response = await app.request("/api/volume", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret",
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  test("reports unsupported backends without changing state", async () => {
+    const unavailable = () => {
+      throw new PlayerError(
+        "Volume control is unavailable for the configured audio backend",
+      );
+    };
+    const app = createTestApp({
+      ...playerService,
+      getVolume: unavailable,
+      setVolume: unavailable,
+    });
+
+    const getResponse = await app.request("/api/volume", {
+      headers: { Authorization: "Bearer secret" },
+    });
+    expect(getResponse.status).toBe(400);
+
+    const setResponse = await app.request("/api/volume", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ volume: 50 }),
+    });
+    expect(setResponse.status).toBe(400);
   });
 });

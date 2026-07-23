@@ -13,6 +13,7 @@ describe("persisted queue restoration", () => {
       queue: [],
       queuePosition: -1,
       queueMode: { loop: true, random: true },
+      volume: 34,
       savedAt: 1,
       version: 3,
     };
@@ -22,5 +23,6 @@ describe("persisted queue restoration", () => {
     expect(restoredState).toBe(savedState);
     expect(player.getQueue()).toEqual([]);
     expect(player.getQueueMode()).toEqual({ loop: true, random: true });
+    expect(player.getVolume()).toBe(34);
   });
 });

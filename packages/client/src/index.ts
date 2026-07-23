@@ -19,6 +19,7 @@ import {
   QueueShuffleResponseSchema,
   QueueUpdateResponseSchema,
   SearchResponseSchema,
+  VolumeResponseSchema,
 } from "./response-contracts";
 
 import type {
@@ -40,6 +41,7 @@ import type {
   QueueModeResponse,
   QueueModeStatusResponse,
   QueueMode,
+  VolumeResponse,
 } from "./types";
 
 export type {
@@ -61,6 +63,7 @@ export type {
   QueueModeResponse,
   QueueModeStatusResponse,
   QueueMode,
+  VolumeResponse,
 };
 
 /**
@@ -343,6 +346,20 @@ export class MusicDaemonClient {
    */
   async status(): Promise<PlaybackStatus> {
     return this.request("/status", PlaybackStatusSchema);
+  }
+
+  /**
+   * Get native per-stream playback volume.
+   */
+  async getVolume(): Promise<VolumeResponse> {
+    return this.request("/volume", VolumeResponseSchema);
+  }
+
+  /**
+   * Set native per-stream playback volume.
+   */
+  async setVolume(volume: number): Promise<VolumeResponse> {
+    return this.request("/volume", VolumeResponseSchema, "POST", { volume });
   }
 
   /**

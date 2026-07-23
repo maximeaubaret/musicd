@@ -16,6 +16,7 @@ import type {
   QueueResponse,
   QueueUpdateResponse,
   SearchResponse,
+  VolumeResponse,
 } from "./types";
 
 export const DaemonErrorResponseSchema = z.object({
@@ -182,6 +183,11 @@ export const QueueModeStatusResponseSchema: z.ZodType<QueueModeStatusResponse> =
     success: SuccessSchema,
     queueMode: QueueModeSchema,
   });
+
+export const VolumeResponseSchema: z.ZodType<VolumeResponse> = z.object({
+  success: SuccessSchema,
+  volume: z.number().finite().min(0).max(100),
+});
 
 export const SearchResponseSchema: z.ZodType<SearchResponse> = z.object({
   success: SuccessSchema,

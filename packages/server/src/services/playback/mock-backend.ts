@@ -8,6 +8,7 @@ export class MockBackend implements PlaybackBackend {
   private _isPlaying = false;
   private _isPaused = false;
   private _position = 0;
+  private _volume = 100;
   private terminalEventEmitted = false;
   private onCompleteCallback?: (position: number) => void | Promise<void>;
   private onErrorCallback?: (
@@ -18,10 +19,10 @@ export class MockBackend implements PlaybackBackend {
   /**
    * Start playing (synchronous, no delays)
    */
-  async play(_source: PlaybackSource): Promise<void> {
+  async play(source: PlaybackSource): Promise<void> {
     this._isPlaying = true;
     this._isPaused = false;
-    this._position = 0;
+    this._position = source.startPosition ?? 0;
     this.terminalEventEmitted = false;
   }
 
@@ -72,6 +73,14 @@ export class MockBackend implements PlaybackBackend {
    */
   getPosition(): number {
     return this._position;
+  }
+
+  getVolume(): number {
+    return this._volume;
+  }
+
+  setVolume(volumePercent: number): void {
+    this._volume = Math.max(0, Math.min(100, volumePercent));
   }
 
   /**

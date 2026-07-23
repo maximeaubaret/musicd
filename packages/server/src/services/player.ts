@@ -110,11 +110,13 @@ export class PlayerService {
     queue: QueueItem[];
     position: number;
     queueMode: QueueMode;
+    volume: number;
   } {
     return {
       queue: [...this.queue],
       position: this.queuePosition,
       queueMode: { ...this.queueMode },
+      volume: this.backend.getVolume?.() ?? 100,
     };
   }
 
@@ -125,11 +127,15 @@ export class PlayerService {
     queue: QueueItem[];
     position: number;
     queueMode?: QueueMode;
+    volume?: number;
   }): void {
     this.queue = [...state.queue];
     this.queuePosition = state.position;
     if (state.queueMode) {
       this.queueMode = { ...state.queueMode };
+    }
+    if (state.volume !== undefined && this.backend.setVolume) {
+      this.backend.setVolume(state.volume);
     }
   }
 
@@ -299,6 +305,73 @@ export class PlayerService {
 
     const source = await resolver(item);
     await this.playInternal(source, item);
+  }
+
+  /**
+   * Seek within the currently playing track.
+   * ffplay cannot reposition a live stream, so this restarts playback at the
+   * requested offset; playInternal's manual stop keeps the swap from looking
+   * like a natural completion, so the queue does not advance. Seeking while
+   * paused resumes playback at the new position.
+   */
+  async seek(positionSeconds: number): Promise<void> {
+    const item = this.currentItem;
+    if (!item || !this.backend.isPlaying()) {
+      throw new PlayerError("Nothing is playing");
+    }
+
+    // Backends with native seeking (mpv) reposition in place — no restart,
+    // no audio gap, pause state preserved.
+    if (this.backend.seek) {
+      await this.backend.seek(Math.max(0, positionSeconds));
+      return;
+    }
+
+    const resolver = this.playbackSourceResolvers.get(item.source);
+    if (!resolver) {
+      throw new PlayerError(
+        `No playback source resolver registered for source: ${item.source}`,
+      );
+    }
+
+    const source = await resolver(item);
+    await this.playInternal(
+      { ...source, startPosition: Math.max(0, positionSeconds) },
+      item,
+    );
+  }
+
+  /**
+   * Read the backend's native per-stream volume.
+   */
+  getVolume(): number {
+    if (!this.backend.getVolume) {
+      throw new PlayerError(
+        "Volume control is unavailable for the configured audio backend",
+      );
+    }
+    return this.backend.getVolume();
+  }
+
+  /**
+   * Set native per-stream volume and persist it with daemon state.
+   */
+  setVolume(volumePercent: number): number {
+    if (
+      !Number.isFinite(volumePercent) ||
+      volumePercent < 0 ||
+      volumePercent > 100
+    ) {
+      throw new PlayerError("Volume must be between 0 and 100");
+    }
+    if (!this.backend.setVolume || !this.backend.getVolume) {
+      throw new PlayerError(
+        "Volume control is unavailable for the configured audio backend",
+      );
+    }
+    this.backend.setVolume(volumePercent);
+    this.triggerStateSave();
+    return this.backend.getVolume();
   }
 
   /**

@@ -43,6 +43,7 @@ export const JellyfinConfigSchema = z.object({
 
 export const AudioConfigSchema = z.object({
   device: z.string().optional(),
+  backend: z.enum(["ffplay", "mpv"]).optional(),
 });
 
 export const ServerBindingConfigSchema = z.object({

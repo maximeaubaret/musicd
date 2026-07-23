@@ -157,4 +157,9 @@ export interface QueueModeStatusResponse {
   queueMode: QueueMode;
 }
 
+export interface VolumeResponse {
+  success: boolean;
+  volume: number;
+}
+
 export { PlaybackStatus, QueueMode };

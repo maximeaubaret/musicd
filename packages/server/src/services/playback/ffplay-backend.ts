@@ -69,6 +69,12 @@ export function getFFPlayArguments(
     "-stats",
   ];
 
+  // Seek at spawn: ffplay reports the absolute media clock afterwards, so
+  // position tracking needs no adjustment.
+  if (source.startPosition !== undefined && source.startPosition > 0) {
+    args.push("-ss", String(source.startPosition));
+  }
+
   if (source.headers) {
     const serializedHeaders = Object.entries(source.headers)
       .map(([name, value]) => `${name}: ${value}\r\n`)
@@ -161,10 +167,10 @@ export class FFPlayBackend implements PlaybackBackend {
       const activeProcess = this.spawnProcess("ffplay", args, spawnOptions);
       childProcess = activeProcess;
       this.process = activeProcess;
-      this.position = 0;
+      this.position = source.startPosition ?? 0;
       this.isPaused_ = false;
       this.manuallyStopped = false;
-      let processPosition = 0;
+      let processPosition = source.startPosition ?? 0;
       let decodedAudio = false;
       let statusBuffer = "";
       let startupTimedOut = false;

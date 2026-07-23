@@ -10,6 +10,7 @@ export interface JellyfinConfig {
 /** Audio playback configuration */
 export interface AudioConfig {
   device?: string;
+  backend?: "ffplay" | "mpv";
 }
 
 /** Server binding configuration */
