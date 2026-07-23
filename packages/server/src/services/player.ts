@@ -154,13 +154,21 @@ export class PlayerService {
       await this.stop();
     }
 
+    let generation = this.playbackGeneration;
     try {
       // Set current item BEFORE playing (for position reporting)
       this.currentItem = item;
-      this.playbackGeneration++;
+      generation = ++this.playbackGeneration;
 
       // Play through backend (no ffplay details here!)
       await this.backend.play(source);
+      if (
+        this.playbackGeneration !== generation ||
+        this.currentItem !== item ||
+        !this.backend.isPlaying()
+      ) {
+        return;
+      }
 
       // Report playback start to Jellyfin (only for Jellyfin items)
       if (this.playbackReporter && item.source === "jellyfin") {
@@ -210,7 +218,9 @@ export class PlayerService {
         }
       }
     } catch (error) {
-      this.cleanupPlaybackState();
+      if (this.playbackGeneration === generation && this.currentItem === item) {
+        this.cleanupPlaybackState();
+      }
       throw new PlayerError(`Failed to play: ${error}`);
     }
   }

@@ -6,6 +6,56 @@ import { PlayerService } from "./player";
 import { MockBackend } from "./playback/mock-backend";
 
 import type { JellyfinItem, YouTubeQueueItem } from "@musicd/shared";
+import type { PlaybackBackend, PlaybackSource } from "./playback/backend";
+
+class CompletesFirstTrackDuringPlayBackend implements PlaybackBackend {
+  private playing = false;
+  private paused = false;
+  private playCount = 0;
+  private onCompleteCallback?: (position: number) => void | Promise<void>;
+
+  async play(_source: PlaybackSource): Promise<void> {
+    this.playCount++;
+    this.playing = true;
+    if (this.playCount === 1) {
+      this.playing = false;
+      await this.onCompleteCallback?.(180);
+    }
+  }
+
+  pause(): void {
+    this.paused = this.playing;
+  }
+
+  resume(): void {
+    this.paused = false;
+  }
+
+  async stop(): Promise<void> {
+    this.playing = false;
+    this.paused = false;
+  }
+
+  isPlaying(): boolean {
+    return this.playing;
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  getPosition(): number {
+    return 0;
+  }
+
+  onComplete(callback: (position: number) => void | Promise<void>): void {
+    this.onCompleteCallback = callback;
+  }
+
+  onError(
+    _callback: (error: Error, position: number) => void | Promise<void>,
+  ): void {}
+}
 
 // Create mock JellyfinItem
 function createMockItem(id: string, name: string): JellyfinItem {
@@ -627,6 +677,38 @@ describe("PlayerService", () => {
 
       expect(player.getQueuePosition()).toBe(1);
       expect(player.isPlaying()).toBe(true);
+    });
+
+    test("advances when the first track finishes before backend.play returns", async () => {
+      const startupBackend = new CompletesFirstTrackDuringPlayBackend();
+      const startupPlayer = new PlayerService(startupBackend);
+      const reportStart = mock(async () => {});
+      startupPlayer.registerPlaybackSourceResolver(
+        "jellyfin",
+        async (item) => ({
+          url: `http://test.local/stream/${item.id}`,
+        }),
+      );
+      startupPlayer.setPlaybackReporter({
+        reportStart,
+        reportProgress: async () => {},
+        reportStop: async () => {},
+      });
+      addJellyfinItems(startupPlayer, createMockQueue(2));
+
+      await startupPlayer.playFromQueue(0);
+
+      const status = await startupPlayer.getStatus();
+      expect(status.state).toBe("playing");
+      expect(status.currentItem?.id).toBe("item-1");
+      expect(status.queuePosition).toBe(1);
+      expect(reportStart).toHaveBeenCalledTimes(1);
+      expect(reportStart).toHaveBeenCalledWith(
+        "item-1",
+        expect.stringContaining("session-"),
+      );
+
+      await startupPlayer.stop();
     });
 
     test("does not advance when manually stopped", async () => {
