@@ -85,6 +85,7 @@ export interface ApiJellyfinService {
   authenticate: JellyfinService["authenticate"];
   browse: JellyfinService["browse"];
   getAlbumTracks: JellyfinService["getAlbumTracks"];
+  getArtistAlbums: JellyfinService["getArtistAlbums"];
   getArtistTracks: JellyfinService["getArtistTracks"];
   getArtwork: JellyfinService["getArtwork"];
   getItem: JellyfinService["getItem"];
@@ -1434,6 +1435,78 @@ export function createApiRoutes(
         {
           success: false,
           error: "Failed to get artist tracks",
+        },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /artist/:id/albums - An artist's discography, oldest first.
+   */
+  app.get("/artist/:id/albums", async (c) => {
+    try {
+      const artistId = c.req.param("id");
+
+      if (!artistId) {
+        return c.json(
+          {
+            success: false,
+            error: "Artist ID is required",
+          },
+          400,
+        );
+      }
+
+      // Metadata and albums are independent Jellyfin calls; fetch together.
+      const [artist, albums] = await Promise.all([
+        jellyfinService.getItem(artistId),
+        jellyfinService.getArtistAlbums(artistId),
+      ]);
+
+      if (artist.Type !== "MusicArtist") {
+        return c.json(
+          {
+            success: false,
+            error: "Item is not an artist",
+          },
+          400,
+        );
+      }
+
+      return c.json({
+        success: true,
+        artist: {
+          id: artist.Id,
+          name: artist.Name,
+          type: artist.Type,
+        },
+        albums: albums.map((album) => ({
+          id: album.Id,
+          name: album.Name,
+          type: album.Type,
+          artist: album.AlbumArtist || album.Artists?.[0],
+          year: album.ProductionYear,
+        })),
+        count: albums.length,
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 400 | 401;
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+          },
+          statusCode,
+        );
+      }
+
+      console.error("Error getting artist albums:", error);
+      return c.json(
+        {
+          success: false,
+          error: "Failed to get artist albums",
         },
         500,
       );

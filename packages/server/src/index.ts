@@ -264,6 +264,7 @@ async function main() {
   console.log(`  POST /api/queue/previous      - Go to previous song`);
   console.log(`  POST /api/queue/play/:index   - Play from queue position`);
   console.log(`  POST /api/queue/remove/:index - Remove item from queue`);
+  console.log(`  GET  /api/artist/:id/albums   - An artist's albums`);
   console.log(`  GET  /api/library/:kind       - Browse albums/artists/songs`);
   console.log(`  GET  /api/artwork/:id         - Stream item artwork`);
   console.log(`  GET  /api/health              - Check daemon health`);

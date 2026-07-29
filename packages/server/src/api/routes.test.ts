@@ -22,6 +22,7 @@ const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
   browse: failIfCalled,
   getAlbumTracks: failIfCalled,
+  getArtistAlbums: failIfCalled,
   getArtistTracks: failIfCalled,
   getArtwork: failIfCalled,
   getItem: failIfCalled,
@@ -186,6 +187,7 @@ describe("API authentication", () => {
       ["GET", "/api/search?q=test"],
       ["GET", "/api/album/id"],
       ["GET", "/api/artist/id"],
+      ["GET", "/api/artist/id/albums"],
       ["GET", "/api/artwork/id"],
       ["GET", "/api/library/albums"],
     ] as const;
@@ -1014,5 +1016,103 @@ describe("/api/volume", () => {
       body: JSON.stringify({ volume: 50 }),
     });
     expect(setResponse.status).toBe(400);
+  });
+});
+
+describe("GET /api/artist/:id/albums", () => {
+  function createArtistAlbumsApp(
+    overrides: Partial<ApiJellyfinService>,
+  ): ReturnType<typeof createApp> {
+    return createApp({
+      jellyfinService: { ...jellyfinService, ...overrides },
+      youtubeService,
+      playerService,
+      clock,
+      startTime: 1_000,
+      daemonPassword: "secret",
+      ytDlpAvailable: false,
+    });
+  }
+
+  const artist: JellyfinItem = {
+    Id: "artist-1",
+    Name: "Test Artist",
+    Type: "MusicArtist",
+  };
+
+  test("returns the artist's albums without falling through to /artist/:id", async () => {
+    const app = createArtistAlbumsApp({
+      getItem: async () => artist,
+      getArtistAlbums: async (id) => {
+        expect(id).toBe("artist-1");
+        return [
+          {
+            Id: "album-1",
+            Name: "First Album",
+            Type: "MusicAlbum",
+            AlbumArtist: "Test Artist",
+            ProductionYear: 1999,
+          },
+        ];
+      },
+      // Reaching the track route instead would call this and fail the test.
+      getArtistTracks: failIfCalled,
+    });
+
+    const response = await app.request("/api/artist/artist-1/albums", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      artist: { id: "artist-1", name: "Test Artist", type: "MusicArtist" },
+      albums: [
+        {
+          id: "album-1",
+          name: "First Album",
+          type: "MusicAlbum",
+          artist: "Test Artist",
+          year: 1999,
+        },
+      ],
+      count: 1,
+    });
+  });
+
+  test("rejects ids that are not artists", async () => {
+    const app = createArtistAlbumsApp({
+      getItem: async () => ({
+        Id: "album-1",
+        Name: "An Album",
+        Type: "MusicAlbum",
+      }),
+      getArtistAlbums: async () => [],
+    });
+
+    const response = await app.request("/api/artist/album-1/albums", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      success: false,
+      error: "Item is not an artist",
+    });
+  });
+
+  test("maps Jellyfin failures to their status code", async () => {
+    const app = createArtistAlbumsApp({
+      getItem: async () => artist,
+      getArtistAlbums: async () => {
+        throw new JellyfinError("Artist not found", 404);
+      },
+    });
+
+    const response = await app.request("/api/artist/artist-1/albums", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(404);
   });
 });

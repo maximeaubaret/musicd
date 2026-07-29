@@ -532,6 +532,74 @@ export class JellyfinService {
   }
 
   /**
+   * Get an artist's albums, ordered as a discography (oldest first).
+   * Uses albumArtistIds so compilations the artist merely appears on do not
+   * crowd out their own releases.
+   */
+  async getArtistAlbums(artistId: string): Promise<JellyfinItem[]> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const params = new URLSearchParams({
+        albumArtistIds: artistId,
+        includeItemTypes: "MusicAlbum",
+        recursive: "true",
+        sortBy: "ProductionYear,SortName",
+        sortOrder: "Ascending",
+        userId: this.userId!,
+      });
+
+      const response = await this.loggedFetch(
+        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
+        {
+          headers: this.getHeaders(),
+        },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to get artist albums: ${response.statusText}`,
+          response.status,
+        );
+      }
+
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsResponseSchema,
+        "fetching artist albums",
+      );
+
+      return result.Items.map((item) => ({
+        Id: item.Id,
+        Name: item.Name,
+        Type: item.Type,
+        Artists: item.Artists || [],
+        Album: item.Album,
+        AlbumArtist: item.AlbumArtist,
+        RunTimeTicks: item.RunTimeTicks,
+        ProductionYear: item.ProductionYear,
+      }));
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error fetching artist albums: ${error}`);
+    }
+  }
+
+  /**
    * Get the authenticated playback source for an item
    */
   async getPlaybackSource(itemId: string): Promise<PlaybackSource> {
