@@ -127,6 +127,7 @@ const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
   browse: failIfCalled,
   getAlbumTracks: failIfCalled,
+  getArtistAlbums: failIfCalled,
   getArtistTracks: failIfCalled,
   getArtwork: failIfCalled,
   getItem: async (id) => {
