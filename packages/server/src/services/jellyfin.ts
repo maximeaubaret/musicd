@@ -99,7 +99,9 @@ const JellyfinItemsPageSchema = z.object({
   TotalRecordCount: OptionalFiniteNumberSchema,
 });
 
-export type BrowseKind = "albums" | "artists" | "songs";
+export type BrowseKind = "albums" | "artists" | "playlists" | "songs";
+
+export type FavoriteKind = "albums" | "artists" | "songs";
 
 export interface BrowsePage {
   items: JellyfinItem[];
@@ -600,6 +602,57 @@ export class JellyfinService {
   }
 
   /**
+   * Get the ordered audio tracks from a Jellyfin playlist.
+   */
+  async getPlaylistTracks(playlistId: string): Promise<JellyfinItem[]> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const params = new URLSearchParams({ userId: this.userId! });
+      const response = await this.loggedFetch(
+        `${this.config.serverUrl}/Playlists/${playlistId}/Items?${params}`,
+        { headers: this.getHeaders() },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (response.status === 404) {
+        throw new JellyfinError(`Playlist not found: ${playlistId}`, 404);
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to get playlist tracks: ${response.statusText}`,
+          response.status,
+        );
+      }
+
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsPageSchema,
+        "fetching playlist tracks",
+      );
+
+      return result.Items.filter((item) => item.Type === "Audio");
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error fetching playlist tracks: ${error}`);
+    }
+  }
+
+  /**
    * Get the authenticated playback source for an item
    */
   async getPlaybackSource(itemId: string): Promise<PlaybackSource> {
@@ -664,7 +717,7 @@ export class JellyfinService {
       const params = new URLSearchParams({
         userId: this.userId!,
         // Albums group by artist first so one artist's discography sits
-        // together; artists and songs stay purely alphabetical.
+        // together; artists, playlists, and songs stay alphabetical.
         sortBy: kind === "albums" ? "AlbumArtist,SortName" : "SortName",
         sortOrder: "Ascending",
         startIndex: startIndex.toString(),
@@ -676,10 +729,13 @@ export class JellyfinService {
       if (kind === "artists") {
         url = `${this.config.serverUrl}/Artists/AlbumArtists?${params}`;
       } else {
-        params.set(
-          "includeItemTypes",
-          kind === "albums" ? "MusicAlbum" : "Audio",
-        );
+        const itemType =
+          kind === "albums"
+            ? "MusicAlbum"
+            : kind === "playlists"
+              ? "Playlist"
+              : "Audio";
+        params.set("includeItemTypes", itemType);
         url = `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`;
       }
 
@@ -716,6 +772,123 @@ export class JellyfinService {
         throw error;
       }
       throw new JellyfinError(`Error browsing ${kind}: ${error}`);
+    }
+  }
+
+  /**
+   * Browse the authenticated user's favorite music items.
+   */
+  async browseFavorites(
+    kind: FavoriteKind,
+    startIndex: number = 0,
+    limit: number = 100,
+  ): Promise<BrowsePage> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const itemType =
+        kind === "albums"
+          ? "MusicAlbum"
+          : kind === "artists"
+            ? "MusicArtist"
+            : "Audio";
+      const params = new URLSearchParams({
+        userId: this.userId!,
+        includeItemTypes: itemType,
+        filters: "IsFavorite",
+        recursive: "true",
+        sortBy: kind === "albums" ? "AlbumArtist,SortName" : "SortName",
+        sortOrder: "Ascending",
+        startIndex: startIndex.toString(),
+        limit: limit.toString(),
+      });
+
+      const response = await this.loggedFetch(
+        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
+        { headers: this.getHeaders() },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to browse favorite ${kind}: ${response.statusText}`,
+          response.status,
+        );
+      }
+
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsPageSchema,
+        `browsing favorite ${kind}`,
+      );
+
+      return {
+        items: result.Items,
+        total: result.TotalRecordCount ?? result.Items.length,
+      };
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(`Error browsing favorite ${kind}: ${error}`);
+    }
+  }
+
+  /**
+   * Mark or unmark an item as a favorite for the authenticated user.
+   */
+  async setFavorite(itemId: string, favorite: boolean): Promise<void> {
+    if (!this.isAuthenticated()) {
+      throw new JellyfinError(
+        "Not authenticated. Please run setup first.",
+        401,
+      );
+    }
+
+    try {
+      const response = await this.loggedFetch(
+        `${this.config.serverUrl}/Users/${this.userId}/FavoriteItems/${itemId}`,
+        {
+          method: favorite ? "POST" : "DELETE",
+          headers: this.getHeaders(),
+        },
+      );
+
+      if (response.status === 401) {
+        throw new JellyfinError(
+          "Authentication token is invalid or expired. Please run setup again.",
+          401,
+        );
+      }
+
+      if (response.status === 404) {
+        throw new JellyfinError(`Item not found: ${itemId}`, 404);
+      }
+
+      if (!response.ok) {
+        throw new JellyfinError(
+          `Failed to ${favorite ? "mark" : "unmark"} favorite: ${response.statusText}`,
+          response.status,
+        );
+      }
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        throw error;
+      }
+      throw new JellyfinError(
+        `Error ${favorite ? "marking" : "unmarking"} favorite: ${error}`,
+      );
     }
   }
 

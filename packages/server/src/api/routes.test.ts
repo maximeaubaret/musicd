@@ -21,12 +21,15 @@ function failIfCalled(): never {
 const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
   browse: failIfCalled,
+  browseFavorites: failIfCalled,
   getAlbumTracks: failIfCalled,
   getArtistAlbums: failIfCalled,
   getArtistTracks: failIfCalled,
   getArtwork: failIfCalled,
   getItem: failIfCalled,
+  getPlaylistTracks: failIfCalled,
   search: failIfCalled,
+  setFavorite: failIfCalled,
 };
 
 const youtubeService: ApiYouTubeService = {
@@ -89,6 +92,7 @@ interface QueueTestLibrary {
   items: Record<string, JellyfinItem>;
   albumTracks?: Record<string, JellyfinItem[]>;
   artistTracks?: Record<string, JellyfinItem[]>;
+  playlistTracks?: Record<string, JellyfinItem[]>;
 }
 
 interface QueueAddTestRequest {
@@ -116,6 +120,7 @@ function createQueueTestApp(library: QueueTestLibrary) {
       },
       getAlbumTracks: async (id) => library.albumTracks?.[id] ?? [],
       getArtistTracks: async (id) => library.artistTracks?.[id] ?? [],
+      getPlaylistTracks: async (id) => library.playlistTracks?.[id] ?? [],
     },
     youtubeService,
     playerService: player,
@@ -188,6 +193,10 @@ describe("API authentication", () => {
       ["GET", "/api/album/id"],
       ["GET", "/api/artist/id"],
       ["GET", "/api/artist/id/albums"],
+      ["GET", "/api/playlist/id"],
+      ["GET", "/api/favorites/songs"],
+      ["POST", "/api/favorites/id"],
+      ["DELETE", "/api/favorites/id"],
       ["GET", "/api/artwork/id"],
       ["GET", "/api/library/albums"],
     ] as const;
@@ -486,7 +495,7 @@ describe("POST /api/queue/add playback behavior", () => {
     });
   });
 
-  test("audio items, albums, and artists preserve track metadata and order", async () => {
+  test("audio items and music containers preserve track metadata and order", async () => {
     const audio = {
       ...createAudioItem("audio", "Audio Track"),
       ProductionYear: 2024,
@@ -510,20 +519,28 @@ describe("POST /api/queue/add playback behavior", () => {
       Name: "Artist",
       Type: "MusicArtist",
     };
+    const playlist: JellyfinItem = {
+      Id: "playlist",
+      Name: "Playlist",
+      Type: "Playlist",
+    };
     const albumTrack = createAudioItem("album-track", "Album Track");
     const artistTrack = createAudioItem("artist-track", "Artist Track");
+    const playlistTrack = createAudioItem("playlist-track", "Playlist Track");
     const app = createQueueTestApp({
       items: {
         [audio.Id]: audio,
         [album.Id]: album,
         [artist.Id]: artist,
+        [playlist.Id]: playlist,
       },
       albumTracks: { [album.Id]: [albumTrack] },
       artistTracks: { [artist.Id]: [artistTrack] },
+      playlistTracks: { [playlist.Id]: [playlistTrack] },
     });
 
     const response = await addToQueue(app, {
-      itemIds: [audio.Id, album.Id, artist.Id],
+      itemIds: [audio.Id, album.Id, artist.Id, playlist.Id],
       playNow: false,
     });
     const body = await response.json();
@@ -539,6 +556,10 @@ describe("POST /api/queue/add playback behavior", () => {
         expect.objectContaining({
           id: "artist-track",
           jellyfinItem: artistTrack,
+        }),
+        expect.objectContaining({
+          id: "playlist-track",
+          jellyfinItem: playlistTrack,
         }),
       ],
     });
@@ -831,6 +852,27 @@ describe("GET /api/library/:kind", () => {
     expect(calls).toEqual([["songs", 200, 50]]);
   });
 
+  test("accepts playlists as a library kind", async () => {
+    const app = createBrowseApp((kind) => {
+      expect(kind).toBe("playlists");
+      return Promise.resolve({
+        items: [{ Id: "playlist-1", Name: "Road Trip", Type: "Playlist" }],
+        total: 1,
+      });
+    });
+
+    const response = await app.request("/api/library/playlists", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      kind: "playlists",
+      count: 1,
+      items: [{ id: "playlist-1", name: "Road Trip", type: "Playlist" }],
+    });
+  });
+
   test("defaults to startIndex 0 and limit 100", async () => {
     const calls: Array<[number, number]> = [];
     const app = createBrowseApp((_kind, startIndex, limit) => {
@@ -865,6 +907,108 @@ describe("GET /api/library/:kind", () => {
       });
       expect(response.status).toBe(400);
     }
+  });
+});
+
+describe("playlist and favorite API", () => {
+  function createMusicLibraryApp(
+    overrides: Partial<ApiJellyfinService>,
+  ): ReturnType<typeof createApp> {
+    return createApp({
+      jellyfinService: { ...jellyfinService, ...overrides },
+      youtubeService,
+      playerService,
+      clock,
+      startTime: 1_000,
+      daemonPassword: "secret",
+      ytDlpAvailable: false,
+    });
+  }
+
+  test("returns playlist metadata and ordered tracks", async () => {
+    const first = createAudioItem("track-1", "First");
+    const second = createAudioItem("track-2", "Second");
+    const app = createMusicLibraryApp({
+      getItem: async () => ({
+        Id: "playlist-1",
+        Name: "Road Trip",
+        Type: "Playlist",
+      }),
+      getPlaylistTracks: async () => [first, second],
+    });
+
+    const response = await app.request("/api/playlist/playlist-1", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      playlist: { id: "playlist-1", name: "Road Trip", type: "Playlist" },
+      tracks: [
+        { id: "track-1", name: "First" },
+        { id: "track-2", name: "Second" },
+      ],
+      count: 2,
+    });
+  });
+
+  test("browses favorite songs with pagination", async () => {
+    const calls: Array<[string, number, number]> = [];
+    const app = createMusicLibraryApp({
+      browseFavorites: async (kind, startIndex, limit) => {
+        calls.push([kind, startIndex ?? -1, limit ?? -1]);
+        return { items: [createAudioItem("track-1", "Favorite")], total: 8 };
+      },
+    });
+
+    const response = await app.request(
+      "/api/favorites/songs?startIndex=2&limit=3",
+      { headers: { Authorization: "Bearer secret" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      kind: "songs",
+      startIndex: 2,
+      limit: 3,
+      total: 8,
+      items: [{ id: "track-1", name: "Favorite" }],
+    });
+    expect(calls).toEqual([["songs", 2, 3]]);
+  });
+
+  test("marks and unmarks favorites", async () => {
+    const calls: Array<[string, boolean]> = [];
+    const app = createMusicLibraryApp({
+      setFavorite: async (itemId, favorite) => {
+        calls.push([itemId, favorite]);
+      },
+    });
+    const headers = { Authorization: "Bearer secret" };
+
+    const mark = await app.request("/api/favorites/track-1", {
+      method: "POST",
+      headers,
+    });
+    const unmark = await app.request("/api/favorites/track-1", {
+      method: "DELETE",
+      headers,
+    });
+
+    expect(await mark.json()).toEqual({
+      success: true,
+      itemId: "track-1",
+      favorite: true,
+    });
+    expect(await unmark.json()).toEqual({
+      success: true,
+      itemId: "track-1",
+      favorite: false,
+    });
+    expect(calls).toEqual([
+      ["track-1", true],
+      ["track-1", false],
+    ]);
   });
 });
 

@@ -7,9 +7,13 @@ import type {
   AlbumResponse,
   ArtistResponse,
   AuthResponse,
+  FavoriteUpdateResponse,
+  FavoritesResponse,
+  LibraryResponse,
   PlaybackActionResponse,
   PlayQueueResponse,
   PlayResponse,
+  PlaylistResponse,
   QueueAddResponse,
   QueueModeResponse,
   QueueModeStatusResponse,
@@ -89,6 +93,16 @@ const TrackInfoSchema = z.object({
   duration: z.number().finite().nonnegative(),
   year: z.number().int().optional(),
   indexNumber: z.number().int().optional(),
+});
+
+const SearchResultSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.string(),
+  artist: z.string().optional(),
+  album: z.string().optional(),
+  duration: z.number().finite().nonnegative(),
+  year: z.number().int().optional(),
 });
 
 export const AuthResponseSchema: z.ZodType<AuthResponse> = z.object({
@@ -193,17 +207,27 @@ export const SearchResponseSchema: z.ZodType<SearchResponse> = z.object({
   success: SuccessSchema,
   query: z.string(),
   count: z.number().int().nonnegative(),
-  results: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      type: z.string(),
-      artist: z.string().optional(),
-      album: z.string().optional(),
-      duration: z.number().finite().nonnegative(),
-      year: z.number().int().optional(),
-    }),
-  ),
+  results: z.array(SearchResultSchema),
+});
+
+export const LibraryResponseSchema: z.ZodType<LibraryResponse> = z.object({
+  success: SuccessSchema,
+  kind: z.enum(["albums", "artists", "playlists", "songs"]),
+  startIndex: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+  items: z.array(SearchResultSchema),
+});
+
+export const FavoritesResponseSchema: z.ZodType<FavoritesResponse> = z.object({
+  success: SuccessSchema,
+  kind: z.enum(["albums", "artists", "songs"]),
+  startIndex: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+  items: z.array(SearchResultSchema),
 });
 
 export const AlbumResponseSchema: z.ZodType<AlbumResponse> = z.object({
@@ -228,6 +252,24 @@ export const ArtistResponseSchema: z.ZodType<ArtistResponse> = z.object({
   tracks: z.array(TrackInfoSchema),
   count: z.number().int().nonnegative(),
 });
+
+export const PlaylistResponseSchema: z.ZodType<PlaylistResponse> = z.object({
+  success: SuccessSchema,
+  playlist: z.object({
+    id: z.string(),
+    name: z.string(),
+    type: z.literal("Playlist"),
+  }),
+  tracks: z.array(TrackInfoSchema),
+  count: z.number().int().nonnegative(),
+});
+
+export const FavoriteUpdateResponseSchema: z.ZodType<FavoriteUpdateResponse> =
+  z.object({
+    success: SuccessSchema,
+    itemId: z.string(),
+    favorite: z.boolean(),
+  });
 
 export const PlaybackStatusSchema: z.ZodType<PlaybackStatus> = z.object({
   state: z.enum(["playing", "paused", "stopped"]),

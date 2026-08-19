@@ -15,7 +15,8 @@ A lightweight daemon that plays music from a [Jellyfin](https://jellyfin.org) se
 
 - Stream music from Jellyfin
 - Queue management with persistent loop and random modes
-- Library browsing, artwork proxying, search, and seeking
+- Library, Jellyfin playlist, and favorite browsing
+- Artwork proxying, search, and seeking
 - Optional mpv backend with gapless seeking and native persistent volume
 - Optional YouTube playback through `yt-dlp`
 - REST API for integration
@@ -119,6 +120,26 @@ Global connection options may appear before the command.
 | `previous`          | `prev` | Go to the previous queue item                              |
 | `status`            | `s`    | Show playback, queue position, and enabled queue modes     |
 
+### Jellyfin playlists and favorites
+
+| Command                 | Alias       | Behavior                                    |
+| ----------------------- | ----------- | ------------------------------------------- |
+| `playlist`              | `playlists` | List Jellyfin playlists                     |
+| `playlist show <id>`    | -           | Show a playlist's ordered audio tracks      |
+| `playlist play <id>`    | -           | Replace the queue and play a playlist       |
+| `playlist play -q <id>` | -           | Append a playlist without starting playback |
+| `favorites [songs]`     | `favorite`  | List favorite songs (the default kind)      |
+| `favorites albums`      | -           | List favorite albums                        |
+| `favorites artists`     | -           | List favorite artists                       |
+| `favorites play [kind]` | -           | Replace the queue and play favorite items   |
+| `favorites play -q`     | -           | Append favorite items without starting them |
+| `favorites add <id>`    | -           | Mark a Jellyfin item as a favorite          |
+| `favorites remove <id>` | -           | Remove a Jellyfin item from favorites       |
+
+Playlist playback preserves Jellyfin's track order and ignores non-audio
+entries. Favorite changes are applied to the Jellyfin user authenticated during
+setup, so they are visible in other Jellyfin clients as well.
+
 ### Queue management
 
 | Command                         | Alias | Behavior                                                 |
@@ -127,7 +148,7 @@ Global connection options may appear before the command.
 | `queue show`                    | `ls`  | Same behavior as `queue`                                 |
 | `queue clear`                   | -     | Clear the queue                                          |
 | `queue add <query>`             | -     | Search, select, and append without starting playback     |
-| `queue add --id <jellyfin-id>`  | -     | Append a Jellyfin track, album, or artist by ID          |
+| `queue add --id <jellyfin-id>`  | -     | Append a Jellyfin track, album, artist, or playlist ID   |
 | `queue add --youtube-url <url>` | -     | Append a YouTube URL                                     |
 | `queue add ... --loop`          | -     | Append, then idempotently enable loop mode               |
 | `queue loop [on\|off]`          | -     | Set loop explicitly; omit the state to toggle            |
@@ -135,7 +156,8 @@ Global connection options may appear before the command.
 | `queue shuffle`                 | -     | Reorder the queue while preserving the active track      |
 
 CLI `queue add` never clears the existing queue, starts playback, or replaces the
-current track. Jellyfin album and artist IDs expand to all their playable tracks.
+current track. Jellyfin album, artist, and playlist IDs expand to their playable
+tracks.
 YouTube URLs and Jellyfin IDs can also be mixed in one REST request; their expanded
 tracks retain request order. `random` changes how the next track is selected,
 whereas `shuffle` changes the stored queue order. Loop and random settings persist
@@ -361,7 +383,11 @@ exposes only the public health endpoint and setup authentication endpoint.
 | GET    | `/api/search?q=...&limit=20` | Search music (`limit` is `1` to `100`)                     |
 | GET    | `/api/album/:id`             | Get album metadata and tracks                              |
 | GET    | `/api/artist/:id`            | Get artist metadata and tracks                             |
-| GET    | `/api/library/:kind`         | Browse albums, artists, or songs with pagination           |
+| GET    | `/api/playlist/:id`          | Get playlist metadata and ordered tracks                   |
+| GET    | `/api/library/:kind`         | Browse albums, artists, playlists, or songs                |
+| GET    | `/api/favorites/:kind`       | Browse favorite albums, artists, or songs                  |
+| POST   | `/api/favorites/:id`         | Mark a Jellyfin item as a favorite                         |
+| DELETE | `/api/favorites/:id`         | Remove a Jellyfin item from favorites                      |
 | GET    | `/api/artwork/:id`           | Stream proxied Jellyfin artwork                            |
 
 `POST /api/queue/add` accepts this body:
@@ -374,8 +400,8 @@ exposes only the public health endpoint and setup authentication endpoint.
 }
 ```
 
-`itemIds` must be a non-empty array. Each Jellyfin album or artist expands to its
-playable tracks. `clearQueue` and `playNow` both default to `false`. With
+`itemIds` must be a non-empty array. Each Jellyfin album, artist, or playlist
+expands to its playable tracks. `clearQueue` and `playNow` both default to `false`. With
 `playNow: false`, adding never starts or replaces playback. With `playNow: true`,
 the daemon starts the first track resolved from this request, including when it
 was appended to an existing queue. `clearQueue: true` clears the old queue before

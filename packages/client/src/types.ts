@@ -84,6 +84,30 @@ export interface SearchResponse {
   results: SearchResult[];
 }
 
+export type LibraryKind = "albums" | "artists" | "playlists" | "songs";
+
+export type FavoriteKind = "albums" | "artists" | "songs";
+
+export interface LibraryResponse {
+  success: boolean;
+  kind: LibraryKind;
+  startIndex: number;
+  limit: number;
+  total: number;
+  count: number;
+  items: SearchResult[];
+}
+
+export interface FavoritesResponse {
+  success: boolean;
+  kind: FavoriteKind;
+  startIndex: number;
+  limit: number;
+  total: number;
+  count: number;
+  items: SearchResult[];
+}
+
 export interface TrackInfo {
   id: string;
   name: string;
@@ -116,6 +140,23 @@ export interface ArtistResponse {
   };
   tracks: TrackInfo[];
   count: number;
+}
+
+export interface PlaylistResponse {
+  success: boolean;
+  playlist: {
+    id: string;
+    name: string;
+    type: "Playlist";
+  };
+  tracks: TrackInfo[];
+  count: number;
+}
+
+export interface FavoriteUpdateResponse {
+  success: boolean;
+  itemId: string;
+  favorite: boolean;
 }
 
 export interface QueueOptions {

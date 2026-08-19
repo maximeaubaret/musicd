@@ -8,10 +8,14 @@ import {
   ArtistResponseSchema,
   AuthResponseSchema,
   DaemonErrorResponseSchema,
+  FavoriteUpdateResponseSchema,
+  FavoritesResponseSchema,
+  LibraryResponseSchema,
   PlaybackActionResponseSchema,
   PlaybackStatusSchema,
   PlayQueueResponseSchema,
   PlayResponseSchema,
+  PlaylistResponseSchema,
   QueueAddResponseSchema,
   QueueModeResponseSchema,
   QueueModeStatusResponseSchema,
@@ -36,6 +40,12 @@ import type {
   TrackInfo,
   AlbumResponse,
   ArtistResponse,
+  FavoriteKind,
+  FavoriteUpdateResponse,
+  FavoritesResponse,
+  LibraryKind,
+  LibraryResponse,
+  PlaylistResponse,
   QueueOptions,
   PlaybackStatus,
   QueueModeResponse,
@@ -58,6 +68,12 @@ export type {
   TrackInfo,
   AlbumResponse,
   ArtistResponse,
+  FavoriteKind,
+  FavoriteUpdateResponse,
+  FavoritesResponse,
+  LibraryKind,
+  LibraryResponse,
+  PlaylistResponse,
   QueueOptions,
   PlaybackStatus,
   QueueModeResponse,
@@ -175,7 +191,7 @@ export class MusicDaemonClient {
   private async request<T>(
     endpoint: string,
     responseSchema: ZodType<T>,
-    method: "GET" | "POST" = "GET",
+    method: "DELETE" | "GET" | "POST" = "GET",
     body?: unknown,
     containsCredentials: boolean = false,
   ): Promise<T> {
@@ -310,6 +326,48 @@ export class MusicDaemonClient {
     return this.request(
       `/search?q=${encodeURIComponent(query)}&limit=${limit}`,
       SearchResponseSchema,
+    );
+  }
+
+  /** Browse a page of the Jellyfin music library. */
+  async browseLibrary(
+    kind: LibraryKind,
+    startIndex = 0,
+    limit = 100,
+  ): Promise<LibraryResponse> {
+    return this.request(
+      `/library/${kind}?startIndex=${startIndex}&limit=${limit}`,
+      LibraryResponseSchema,
+    );
+  }
+
+  /** Browse a page of the authenticated Jellyfin user's favorites. */
+  async getFavorites(
+    kind: FavoriteKind = "songs",
+    startIndex = 0,
+    limit = 100,
+  ): Promise<FavoritesResponse> {
+    return this.request(
+      `/favorites/${kind}?startIndex=${startIndex}&limit=${limit}`,
+      FavoritesResponseSchema,
+    );
+  }
+
+  /** Mark an item as a Jellyfin favorite. */
+  async favorite(itemId: string): Promise<FavoriteUpdateResponse> {
+    return this.request(
+      `/favorites/${encodeURIComponent(itemId)}`,
+      FavoriteUpdateResponseSchema,
+      "POST",
+    );
+  }
+
+  /** Remove an item from Jellyfin favorites. */
+  async unfavorite(itemId: string): Promise<FavoriteUpdateResponse> {
+    return this.request(
+      `/favorites/${encodeURIComponent(itemId)}`,
+      FavoriteUpdateResponseSchema,
+      "DELETE",
     );
   }
 
@@ -489,5 +547,13 @@ export class MusicDaemonClient {
    */
   async getArtist(artistId: string): Promise<ArtistResponse> {
     return this.request(`/artist/${artistId}`, ArtistResponseSchema);
+  }
+
+  /** Get playlist details with ordered tracks. */
+  async getPlaylist(playlistId: string): Promise<PlaylistResponse> {
+    return this.request(
+      `/playlist/${encodeURIComponent(playlistId)}`,
+      PlaylistResponseSchema,
+    );
   }
 }

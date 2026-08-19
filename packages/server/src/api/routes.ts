@@ -55,7 +55,9 @@ const ArtworkItemIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9-]+$/, "Invalid item ID");
 
-const BrowseKindSchema = z.enum(["albums", "artists", "songs"]);
+const BrowseKindSchema = z.enum(["albums", "artists", "playlists", "songs"]);
+
+const FavoriteKindSchema = z.enum(["albums", "artists", "songs"]);
 
 const BrowseStartIndexStringSchema = z
   .string()
@@ -84,12 +86,15 @@ const ArtworkWidthStringSchema = z
 export interface ApiJellyfinService {
   authenticate: JellyfinService["authenticate"];
   browse: JellyfinService["browse"];
+  browseFavorites: JellyfinService["browseFavorites"];
   getAlbumTracks: JellyfinService["getAlbumTracks"];
   getArtistAlbums: JellyfinService["getArtistAlbums"];
   getArtistTracks: JellyfinService["getArtistTracks"];
   getArtwork: JellyfinService["getArtwork"];
   getItem: JellyfinService["getItem"];
+  getPlaylistTracks: JellyfinService["getPlaylistTracks"];
   search: JellyfinService["search"];
+  setFavorite: JellyfinService["setFavorite"];
 }
 
 export interface ApiYouTubeService {
@@ -135,6 +140,8 @@ async function resolveJellyfinQueueItems(
       playableItems = await jellyfinService.getAlbumTracks(item.Id);
     } else if (item.Type === "MusicArtist") {
       playableItems = await jellyfinService.getArtistTracks(item.Id);
+    } else if (item.Type === "Playlist") {
+      playableItems = await jellyfinService.getPlaylistTracks(item.Id);
     } else if (item.Type === "Audio") {
       playableItems = [item];
     } else {
@@ -1514,7 +1521,174 @@ export function createApiRoutes(
   });
 
   /**
-   * GET /library/:kind - Browse albums, artists, or songs alphabetically.
+   * GET /playlist/:id - Get playlist metadata and its ordered audio tracks.
+   */
+  app.get("/playlist/:id", async (c) => {
+    try {
+      const playlistId = c.req.param("id");
+      const [playlist, tracks] = await Promise.all([
+        jellyfinService.getItem(playlistId),
+        jellyfinService.getPlaylistTracks(playlistId),
+      ]);
+
+      if (playlist.Type !== "Playlist") {
+        return c.json({ success: false, error: "Item is not a playlist" }, 400);
+      }
+
+      return c.json({
+        success: true,
+        playlist: {
+          id: playlist.Id,
+          name: playlist.Name,
+          type: playlist.Type,
+        },
+        tracks: tracks.map((track) => ({
+          id: track.Id,
+          name: track.Name,
+          type: track.Type,
+          artist: track.Artists?.[0],
+          album: track.Album,
+          duration: track.RunTimeTicks
+            ? Math.floor(track.RunTimeTicks / 10000000)
+            : 0,
+          year: track.ProductionYear,
+          indexNumber: track.IndexNumber,
+        })),
+        count: tracks.length,
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 400 | 401;
+        return c.json({ success: false, error: error.message }, statusCode);
+      }
+
+      console.error("Error getting playlist tracks:", error);
+      return c.json(
+        { success: false, error: "Failed to get playlist tracks" },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /favorites/:kind - Browse favorite albums, artists, or songs.
+   */
+  app.get("/favorites/:kind", async (c) => {
+    try {
+      const kindResult = FavoriteKindSchema.safeParse(c.req.param("kind"));
+      if (!kindResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: "Kind must be one of: albums, artists, songs",
+          },
+          400,
+        );
+      }
+
+      const startIndexStr = c.req.query("startIndex");
+      const startIndexResult =
+        startIndexStr === undefined
+          ? { success: true as const, data: 0 }
+          : BrowseStartIndexStringSchema.safeParse(startIndexStr);
+      if (!startIndexResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: "startIndex must be a non-negative integer",
+          },
+          400,
+        );
+      }
+
+      const limitStr = c.req.query("limit");
+      const limitResult =
+        limitStr === undefined
+          ? { success: true as const, data: 100 }
+          : BrowseLimitStringSchema.safeParse(limitStr);
+      if (!limitResult.success) {
+        return c.json(
+          { success: false, error: "limit must be between 1 and 200" },
+          400,
+        );
+      }
+
+      const page = await jellyfinService.browseFavorites(
+        kindResult.data,
+        startIndexResult.data,
+        limitResult.data,
+      );
+
+      return c.json({
+        success: true,
+        kind: kindResult.data,
+        startIndex: startIndexResult.data,
+        limit: limitResult.data,
+        total: page.total,
+        count: page.items.length,
+        items: page.items.map((item) => ({
+          id: item.Id,
+          name: item.Name,
+          type: item.Type,
+          artist: item.Artists?.[0] || item.AlbumArtist,
+          album: item.Album,
+          duration: item.RunTimeTicks
+            ? Math.floor(item.RunTimeTicks / 10000000)
+            : 0,
+          year: item.ProductionYear,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 400 | 401;
+        return c.json({ success: false, error: error.message }, statusCode);
+      }
+
+      console.error("Error browsing favorites:", error);
+      return c.json(
+        { success: false, error: "Failed to browse favorites" },
+        500,
+      );
+    }
+  });
+
+  /** Mark an item as a Jellyfin favorite. */
+  app.post("/favorites/:id", async (c) => {
+    try {
+      const itemId = c.req.param("id");
+      await jellyfinService.setFavorite(itemId, true);
+      return c.json({ success: true, itemId, favorite: true });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 401 | 403;
+        return c.json({ success: false, error: error.message }, statusCode);
+      }
+      console.error("Error marking favorite:", error);
+      return c.json({ success: false, error: "Failed to mark favorite" }, 500);
+    }
+  });
+
+  /** Remove an item from the authenticated user's Jellyfin favorites. */
+  app.delete("/favorites/:id", async (c) => {
+    try {
+      const itemId = c.req.param("id");
+      await jellyfinService.setFavorite(itemId, false);
+      return c.json({ success: true, itemId, favorite: false });
+    } catch (error) {
+      if (error instanceof JellyfinError) {
+        const statusCode = (error.statusCode || 500) as 500 | 404 | 401 | 403;
+        return c.json({ success: false, error: error.message }, statusCode);
+      }
+      console.error("Error unmarking favorite:", error);
+      return c.json(
+        { success: false, error: "Failed to unmark favorite" },
+        500,
+      );
+    }
+  });
+
+  /**
+   * GET /library/:kind - Browse albums, artists, playlists, or songs.
    * Paginated via ?startIndex= and ?limit= (default 100, max 200).
    */
   app.get("/library/:kind", async (c) => {
@@ -1524,7 +1698,7 @@ export function createApiRoutes(
         return c.json(
           {
             success: false,
-            error: "Kind must be one of: albums, artists, songs",
+            error: "Kind must be one of: albums, artists, playlists, songs",
           },
           400,
         );

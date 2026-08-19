@@ -126,6 +126,7 @@ function failIfCalled(): never {
 const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
   browse: failIfCalled,
+  browseFavorites: failIfCalled,
   getAlbumTracks: failIfCalled,
   getArtistAlbums: failIfCalled,
   getArtistTracks: failIfCalled,
@@ -137,7 +138,9 @@ const jellyfinService: ApiJellyfinService = {
     }
     return item;
   },
+  getPlaylistTracks: failIfCalled,
   search: async () => [selectedTrack],
+  setFavorite: failIfCalled,
 };
 
 const youtubeService: ApiYouTubeService = {

@@ -239,6 +239,76 @@ describe("JellyfinService track-list responses", () => {
   });
 });
 
+describe("JellyfinService playlists and favorites", () => {
+  test("gets playlist tracks in order and ignores non-audio entries", async () => {
+    let requestedUrl = "";
+    const fetchMock = mock(async (input: string | URL | Request) => {
+      requestedUrl = input.toString();
+      return Response.json({
+        Items: [
+          { Id: "track-1", Name: "First", Type: "Audio" },
+          { Id: "video-1", Name: "Video", Type: "Video" },
+          { Id: "track-2", Name: "Second", Type: "Audio" },
+        ],
+        TotalRecordCount: 3,
+      });
+    });
+    installFetchMock(fetchMock);
+    const service = createAuthenticatedService();
+
+    const tracks = await service.getPlaylistTracks("playlist-1");
+
+    expect(tracks.map((track) => track.Id)).toEqual(["track-1", "track-2"]);
+    expect(requestedUrl).toBe(
+      "https://jellyfin.example/Playlists/playlist-1/Items?userId=user-1",
+    );
+  });
+
+  test("browses favorites with the Jellyfin favorite filter", async () => {
+    let requestedUrl = "";
+    const fetchMock = mock(async (input: string | URL | Request) => {
+      requestedUrl = input.toString();
+      return Response.json({ Items: [], TotalRecordCount: 12 });
+    });
+    installFetchMock(fetchMock);
+    const service = createAuthenticatedService();
+
+    const page = await service.browseFavorites("albums", 5, 10);
+    const url = new URL(requestedUrl);
+
+    expect(page).toEqual({ items: [], total: 12 });
+    expect(url.pathname).toBe("/Users/user-1/Items");
+    expect(url.searchParams.get("filters")).toBe("IsFavorite");
+    expect(url.searchParams.get("includeItemTypes")).toBe("MusicAlbum");
+    expect(url.searchParams.get("startIndex")).toBe("5");
+    expect(url.searchParams.get("limit")).toBe("10");
+  });
+
+  test("marks and unmarks favorites using the authenticated user", async () => {
+    const requests: Request[] = [];
+    const fetchMock = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+        requests.push(request);
+        return new Response(null, { status: 200 });
+      },
+    );
+    installFetchMock(fetchMock);
+    const service = createAuthenticatedService();
+
+    await service.setFavorite("track-1", true);
+    await service.setFavorite("track-1", false);
+
+    expect(requests.map((request) => [request.method, request.url])).toEqual([
+      ["POST", "https://jellyfin.example/Users/user-1/FavoriteItems/track-1"],
+      ["DELETE", "https://jellyfin.example/Users/user-1/FavoriteItems/track-1"],
+    ]);
+  });
+});
+
 describe("JellyfinService playback source", () => {
   test("rejects malformed item metadata before creating a source", async () => {
     mockJsonResponse({ Id: "track-1", Type: "Audio" });

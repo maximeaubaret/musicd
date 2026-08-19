@@ -349,3 +349,79 @@ describe("MusicDaemonClient volume", () => {
     ).toBe(true);
   });
 });
+
+describe("MusicDaemonClient playlists and favorites", () => {
+  test("uses typed playlist and favorite endpoints", async () => {
+    const requests: Request[] = [];
+    const fetchMock = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+        requests.push(request);
+
+        if (request.url.includes("/api/playlist/")) {
+          return Response.json({
+            success: true,
+            playlist: { id: "playlist-1", name: "Road Trip", type: "Playlist" },
+            tracks: [
+              {
+                id: "track-1",
+                name: "First",
+                type: "Audio",
+                duration: 180,
+              },
+            ],
+            count: 1,
+          });
+        }
+
+        if (request.url.includes("/api/favorites/songs?")) {
+          return Response.json({
+            success: true,
+            kind: "songs",
+            startIndex: 0,
+            limit: 20,
+            total: 1,
+            count: 1,
+            items: [
+              {
+                id: "track-1",
+                name: "First",
+                type: "Audio",
+                duration: 180,
+              },
+            ],
+          });
+        }
+
+        return Response.json({
+          success: true,
+          itemId: "track-1",
+          favorite: request.method === "POST",
+        });
+      },
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    const playlist = await client.getPlaylist("playlist-1");
+    const favorites = await client.getFavorites("songs", 0, 20);
+    const marked = await client.favorite("track-1");
+    const unmarked = await client.unfavorite("track-1");
+
+    expect(playlist.tracks.map((track) => track.id)).toEqual(["track-1"]);
+    expect(favorites.items.map((item) => item.id)).toEqual(["track-1"]);
+    expect(marked.favorite).toBe(true);
+    expect(unmarked.favorite).toBe(false);
+    expect(requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+      "POST",
+      "DELETE",
+    ]);
+  });
+});

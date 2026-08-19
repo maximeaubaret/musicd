@@ -19,6 +19,7 @@ import { logger } from "./logger";
 
 import type { DaemonProtocol, QueueItem, QueueMode } from "@musicd/shared";
 import type {
+  FavoriteKind,
   PlaybackStatus,
   QueueAddResponse,
   SearchResult,
@@ -62,6 +63,15 @@ function parseQueueModeState(value: string): boolean {
     return false;
   }
   throw new InvalidArgumentError('State must be either "on" or "off"');
+}
+
+function parseFavoriteKind(value: string): FavoriteKind {
+  if (value === "albums" || value === "artists" || value === "songs") {
+    return value;
+  }
+  throw new InvalidArgumentError(
+    'Kind must be one of "albums", "artists", or "songs"',
+  );
 }
 
 // Global options for daemon connection
@@ -451,6 +461,277 @@ program
       }
       console.error(
         chalk.red("✗ Failed to browse:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+async function listPlaylists(options: { limit: number }): Promise<void> {
+  try {
+    const result = await getClient().browseLibrary(
+      "playlists",
+      0,
+      options.limit,
+    );
+    if (isJsonMode()) {
+      outputJson(result);
+    }
+
+    if (result.count === 0) {
+      console.log(chalk.yellow("No Jellyfin playlists found"));
+      return;
+    }
+
+    console.log(
+      chalk.gray(`${result.total} playlist${result.total === 1 ? "" : "s"}\n`),
+    );
+    for (const playlist of result.items) {
+      console.log(
+        `📋 ${chalk.bold.white(truncateTitle(playlist.name))} ${chalk.dim(`[${playlist.id}]`)}`,
+      );
+    }
+  } catch (error) {
+    if (isJsonMode()) {
+      outputJsonError(error);
+    }
+    console.error(
+      chalk.red("✗ Failed to list playlists:"),
+      error instanceof Error ? error.message : error,
+    );
+    process.exit(1);
+  }
+}
+
+const playlistCmd = program
+  .command("playlist")
+  .alias("playlists")
+  .description("Browse and play Jellyfin playlists")
+  .option(
+    "-l, --limit <number>",
+    "Maximum playlists to show",
+    parseSearchLimit,
+    20,
+  )
+  .action(listPlaylists);
+
+playlistCmd
+  .command("show")
+  .description("Show the ordered tracks in a Jellyfin playlist")
+  .argument("<id>", "Jellyfin playlist ID")
+  .action(async (id: string) => {
+    try {
+      const result = await getClient().getPlaylist(id);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+
+      console.log(chalk.bold.white(result.playlist.name));
+      console.log(
+        chalk.gray(`${result.count} track${result.count === 1 ? "" : "s"}\n`),
+      );
+      for (const [index, track] of result.tracks.entries()) {
+        const artist = track.artist ? chalk.cyan(` · ${track.artist}`) : "";
+        console.log(
+          `${chalk.gray(`${index + 1}.`)} ${truncateTitle(track.name)}${artist}`,
+        );
+      }
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to show playlist:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+playlistCmd
+  .command("play")
+  .description("Play a Jellyfin playlist")
+  .argument("<id>", "Jellyfin playlist ID")
+  .option("-q, --queue", "Append instead of replacing the queue")
+  .action(async (id: string, options) => {
+    try {
+      const playlist = await getClient().getPlaylist(id);
+      const result = await getClient().addToQueue([id], {
+        clearQueue: options.queue !== true,
+        playNow: options.queue !== true,
+      });
+      if (isJsonMode()) {
+        outputJson({ ...result, playlist: playlist.playlist });
+      }
+
+      const action = options.queue === true ? "Added" : "Playing";
+      console.log(
+        chalk.green(options.queue === true ? "✓ Added:" : "▶ Playing:"),
+        chalk.bold(playlist.playlist.name),
+      );
+      console.log(
+        chalk.gray(
+          `  ${action} ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+        ),
+      );
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to play playlist:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+const favoritesCmd = program
+  .command("favorites")
+  .alias("favorite")
+  .description("Browse and update Jellyfin favorites")
+  .argument(
+    "[kind]",
+    "Favorite kind: songs, albums, or artists",
+    parseFavoriteKind,
+    "songs",
+  )
+  .option(
+    "-l, --limit <number>",
+    "Maximum favorites to show",
+    parseSearchLimit,
+    20,
+  )
+  .action(async (kind: FavoriteKind, options) => {
+    try {
+      const result = await getClient().getFavorites(kind, 0, options.limit);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+
+      if (result.count === 0) {
+        console.log(chalk.yellow(`No favorite ${kind} found`));
+        return;
+      }
+
+      console.log(chalk.gray(`${result.total} favorite ${kind}\n`));
+      for (const item of result.items) {
+        const artist = item.artist ? chalk.cyan(` · ${item.artist}`) : "";
+        console.log(
+          `♥ ${chalk.bold.white(truncateTitle(item.name))}${artist} ${chalk.dim(`[${item.id}]`)}`,
+        );
+      }
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to list favorites:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+favoritesCmd
+  .command("play")
+  .description("Play favorite Jellyfin items")
+  .argument(
+    "[kind]",
+    "Favorite kind: songs, albums, or artists",
+    parseFavoriteKind,
+    "songs",
+  )
+  .option("-q, --queue", "Append instead of replacing the queue")
+  .option(
+    "-l, --limit <number>",
+    "Maximum favorites to queue",
+    parseSearchLimit,
+    100,
+  )
+  .action(async (kind: FavoriteKind, options) => {
+    try {
+      const favorites = await getClient().getFavorites(kind, 0, options.limit);
+      if (favorites.count === 0) {
+        if (isJsonMode()) {
+          outputJson(favorites);
+        }
+        console.log(chalk.yellow(`No favorite ${kind} found`));
+        return;
+      }
+
+      const result = await getClient().addToQueue(
+        favorites.items.map((item) => item.id),
+        {
+          clearQueue: options.queue !== true,
+          playNow: options.queue !== true,
+        },
+      );
+      if (isJsonMode()) {
+        outputJson({ ...result, favorites });
+      }
+
+      console.log(
+        chalk.green(options.queue === true ? "✓ Added:" : "▶ Playing:"),
+        `${favorites.count} favorite ${kind}`,
+      );
+      console.log(
+        chalk.gray(
+          `  Queued ${result.tracksAdded} track${result.tracksAdded === 1 ? "" : "s"}`,
+        ),
+      );
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to play favorites:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+favoritesCmd
+  .command("add")
+  .description("Mark a Jellyfin item as a favorite")
+  .argument("<id>", "Jellyfin item ID")
+  .action(async (id: string) => {
+    try {
+      const result = await getClient().favorite(id);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      console.log(chalk.green("♥ Added to Jellyfin favorites:"), id);
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to add favorite:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+favoritesCmd
+  .command("remove")
+  .description("Remove a Jellyfin item from favorites")
+  .argument("<id>", "Jellyfin item ID")
+  .action(async (id: string) => {
+    try {
+      const result = await getClient().unfavorite(id);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      console.log(chalk.green("♡ Removed from Jellyfin favorites:"), id);
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to remove favorite:"),
         error instanceof Error ? error.message : error,
       );
       process.exit(1);
