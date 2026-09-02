@@ -8,7 +8,9 @@ import {
   isYouTubeUrl,
   DaemonProtocolSchema,
   PortStringSchema,
+  SEARCH_TYPES,
   SearchLimitStringSchema,
+  SearchTypesStringSchema,
 } from "@musicd/shared";
 import { MusicDaemonClient } from "@musicd/client";
 
@@ -17,7 +19,12 @@ import { createDaemonClient } from "./daemon-connection";
 import { runSetup } from "./setup";
 import { logger } from "./logger";
 
-import type { DaemonProtocol, QueueItem, QueueMode } from "@musicd/shared";
+import type {
+  DaemonProtocol,
+  QueueItem,
+  QueueMode,
+  SearchType,
+} from "@musicd/shared";
 import type {
   FavoriteKind,
   PlaybackStatus,
@@ -53,6 +60,17 @@ function parseSearchLimit(value: string): number {
   }
 
   return result.data;
+}
+
+function parseSearchTypes(value: string): SearchType[] {
+  const result = SearchTypesStringSchema.safeParse(value);
+  if (!result.success) {
+    throw new InvalidArgumentError(
+      `Type must be a comma-separated subset of: ${SEARCH_TYPES.join(", ")}`,
+    );
+  }
+
+  return [...result.data];
 }
 
 function parseQueueModeState(value: string): boolean {
@@ -812,13 +830,22 @@ program
   .argument("<query>", "Search query (searches name, artist, and album)")
   .option(
     "-l, --limit <number>",
-    "Maximum number of results",
+    "Maximum number of results, shared between the types searched",
     parseSearchLimit,
     20,
   )
+  .option(
+    "-t, --type <types>",
+    `Restrict to a comma-separated subset of: ${SEARCH_TYPES.join(", ")}`,
+    parseSearchTypes,
+  )
   .action(async (query: string, options) => {
     try {
-      const result = await getClient().search(query, options.limit);
+      const result = await getClient().search(
+        query,
+        options.limit,
+        options.type,
+      );
 
       if (isJsonMode()) {
         outputJson(result);

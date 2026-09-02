@@ -113,6 +113,7 @@ Global connection options may appear before the command.
 | `browse [query]`    | `b`    | Select an item, replace the queue, and play it immediately |
 | `browse -q [query]` | -      | Select an item and append it without starting playback     |
 | `search <query>`    | -      | Search the Jellyfin library without changing playback      |
+| `search -t <types>` | -      | Restrict a search to `artists`, `albums`, and/or `songs`   |
 | `play`              | `p`    | Resume paused playback or a stopped, restored queue        |
 | `pause`             | `pp`   | Pause playback                                             |
 | `stop`              | -      | Stop playback                                              |
@@ -380,7 +381,7 @@ exposes only the public health endpoint and setup authentication endpoint.
 | POST   | `/api/queue/shuffle`         | Shuffle while preserving the active track                  |
 | POST   | `/api/queue/mode`            | Explicitly set `{ "loop"?: boolean, "random"?: boolean }`  |
 | GET    | `/api/queue/mode`            | Get the `success` and `queueMode: { loop, random }` fields |
-| GET    | `/api/search?q=...&limit=20` | Search music (`limit` is `1` to `100`)                     |
+| GET    | `/api/search?q=...&limit=20` | Search music (`limit` is `1` to `100`; see below)          |
 | GET    | `/api/album/:id`             | Get album metadata and tracks                              |
 | GET    | `/api/artist/:id`            | Get artist metadata and tracks                             |
 | GET    | `/api/playlist/:id`          | Get playlist metadata and ordered tracks                   |
@@ -389,6 +390,31 @@ exposes only the public health endpoint and setup authentication endpoint.
 | POST   | `/api/favorites/:id`         | Mark a Jellyfin item as a favorite                         |
 | DELETE | `/api/favorites/:id`         | Remove a Jellyfin item from favorites                      |
 | GET    | `/api/artwork/:id`           | Stream proxied Jellyfin artwork                            |
+
+### Searching
+
+`GET /api/search` returns artists, then albums, then songs, and `limit` is the
+total budget shared between them.
+
+Songs outnumber albums and artists by orders of magnitude, so a single
+relevance-ordered list spends every slot on tracks: searching a library for
+`love` returns 100 songs while its 20 matching albums and its matching artist
+never appear. Each type is therefore searched separately and given a reserved
+share of the budget, capped so a broad query cannot bury the tracks either.
+Slots a type does not fill are spent on songs rather than left unused.
+
+Pass `type` to scope a search to a comma-separated subset of `artists`,
+`albums`, and `songs`. A scoped search spends the whole budget on the types
+asked for, and the response echoes the types searched:
+
+```bash
+curl "$DAEMON/api/search?q=love&type=albums&limit=30"
+```
+
+Every item-returning endpoint answers with the same fields. Alongside the
+`artist` and `album` labels, tracks carry `artistId` and `albumId` so a client
+can open what those labels name; a name on its own does not identify a library
+item. Both are absent when Jellyfin has no id to give.
 
 `POST /api/queue/add` accepts this body:
 

@@ -77,6 +77,27 @@ function createTestApp(player: ApiPlayerService = playerService) {
   });
 }
 
+function createSearchApp(
+  search: (
+    query: string,
+    limit: number | undefined,
+    types: readonly string[] | undefined,
+  ) => JellyfinItem[],
+) {
+  return createApp({
+    jellyfinService: {
+      ...jellyfinService,
+      search: async (query, limit, types) => search(query, limit, types),
+    },
+    youtubeService,
+    playerService,
+    clock,
+    startTime: 1_000,
+    daemonPassword: "secret",
+    ytDlpAvailable: false,
+  });
+}
+
 function createAudioItem(id: string, name: string): JellyfinItem {
   return {
     Id: id,
@@ -718,6 +739,88 @@ describe("API integer input validation", () => {
     }
     expect(acceptedLimits).toEqual([1, 100]);
   });
+
+  test("search types reject anything outside the known vocabulary", async () => {
+    const app = createTestApp();
+
+    for (const type of ["tracks", "", "albums,tracks", "albums;songs"]) {
+      const response = await app.request(
+        `/api/search?q=test&type=${encodeURIComponent(type)}`,
+        { headers: { Authorization: "Bearer secret" } },
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        success: false,
+        error:
+          "Type must be a comma-separated subset of: artists, albums, songs",
+      });
+    }
+  });
+
+  test("search scopes to the requested types and reports them back", async () => {
+    const requestedTypes: (readonly string[] | undefined)[] = [];
+    const app = createSearchApp((_query, _limit, types) => {
+      requestedTypes.push(types);
+      return [];
+    });
+
+    const response = await app.request("/api/search?q=test&type=songs,albums", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(200);
+    // Spelled songs-first by the caller, normalised to the daemon's own order.
+    expect(requestedTypes).toEqual([["albums", "songs"]]);
+    expect(await response.json()).toMatchObject({
+      types: ["albums", "songs"],
+    });
+  });
+
+  test("omitting the type searches every type", async () => {
+    const requestedTypes: (readonly string[] | undefined)[] = [];
+    const app = createSearchApp((_query, _limit, types) => {
+      requestedTypes.push(types);
+      return [];
+    });
+
+    await app.request("/api/search?q=test", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(requestedTypes).toEqual([["artists", "albums", "songs"]]);
+  });
+
+  test("results carry the ids behind their artist and album labels", async () => {
+    const app = createSearchApp(() => [
+      {
+        Id: "track-1",
+        Name: "Daftendirekt",
+        Type: "Audio",
+        Artists: ["Daft Punk"],
+        ArtistId: "artist-1",
+        Album: "Homework",
+        AlbumId: "album-1",
+        RunTimeTicks: 1_640_000_000,
+      },
+    ]);
+
+    const response = await app.request("/api/search?q=daftendirekt", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          id: "track-1",
+          artist: "Daft Punk",
+          artistId: "artist-1",
+          album: "Homework",
+          albumId: "album-1",
+        },
+      ],
+    });
+  });
 });
 
 describe("GET /api/artwork/:id", () => {
@@ -1217,6 +1320,7 @@ describe("GET /api/artist/:id/albums", () => {
           name: "First Album",
           type: "MusicAlbum",
           artist: "Test Artist",
+          duration: 0,
           year: 1999,
         },
       ],

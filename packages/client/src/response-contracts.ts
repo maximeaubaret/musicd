@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { SEARCH_TYPES } from "@musicd/shared";
+
 import type { PlaybackStatus, QueueItem } from "@musicd/shared";
 
 import type {
@@ -84,26 +86,25 @@ const QueueModeSchema = z.object({
 
 const SuccessSchema = z.literal(true);
 
-const TrackInfoSchema = z.object({
+// One contract for the one payload shape the daemon serialises every item
+// with; TrackInfoSchema and SearchResultSchema are the names the responses
+// below already referred to it by.
+const LibraryItemSchema = z.object({
   id: z.string(),
   name: z.string(),
   type: z.string(),
   artist: z.string().optional(),
+  artistId: z.string().optional(),
   album: z.string().optional(),
+  albumId: z.string().optional(),
   duration: z.number().finite().nonnegative(),
   year: z.number().int().optional(),
   indexNumber: z.number().int().optional(),
 });
 
-const SearchResultSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  type: z.string(),
-  artist: z.string().optional(),
-  album: z.string().optional(),
-  duration: z.number().finite().nonnegative(),
-  year: z.number().int().optional(),
-});
+const TrackInfoSchema = LibraryItemSchema;
+
+const SearchResultSchema = LibraryItemSchema;
 
 export const AuthResponseSchema: z.ZodType<AuthResponse> = z.object({
   success: SuccessSchema,
@@ -206,6 +207,7 @@ export const VolumeResponseSchema: z.ZodType<VolumeResponse> = z.object({
 export const SearchResponseSchema: z.ZodType<SearchResponse> = z.object({
   success: SuccessSchema,
   query: z.string(),
+  types: z.array(z.enum(SEARCH_TYPES)),
   count: z.number().int().nonnegative(),
   results: z.array(SearchResultSchema),
 });
@@ -236,6 +238,7 @@ export const AlbumResponseSchema: z.ZodType<AlbumResponse> = z.object({
     id: z.string(),
     name: z.string(),
     artist: z.string().optional(),
+    artistId: z.string().optional(),
     type: z.string(),
   }),
   tracks: z.array(TrackInfoSchema),

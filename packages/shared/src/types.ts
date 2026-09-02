@@ -98,6 +98,14 @@ export interface JellyfinItem {
   ProductionYear?: number;
   IndexNumber?: number;
   MediaSources?: MediaSource[];
+  /**
+   * Ids for the album and artist a track belongs to, flattened from Jellyfin's
+   * AlbumId/ArtistItems/AlbumArtists. Clients render `Album` and `Artists` as
+   * labels; without the ids beside them there is no way to open what a label
+   * names, because a name alone does not identify a library item.
+   */
+  AlbumId?: string;
+  ArtistId?: string;
 }
 
 export interface MediaSource {
@@ -109,6 +117,11 @@ export interface MediaSource {
 
 // Playback types
 export type PlaybackState = "playing" | "paused" | "stopped";
+
+/** The item kinds `/api/search` can be scoped to, in the order it returns them. */
+export const SEARCH_TYPES = ["artists", "albums", "songs"] as const;
+
+export type SearchType = (typeof SEARCH_TYPES)[number];
 
 /** Queue playback mode */
 export interface QueueMode {

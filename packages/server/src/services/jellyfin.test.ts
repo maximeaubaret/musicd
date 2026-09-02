@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
-import { JellyfinError } from "@musicd/shared";
+import { JellyfinError, SEARCH_TYPES } from "@musicd/shared";
 
-import { JellyfinService } from "./jellyfin";
+import { JellyfinService, searchSlots } from "./jellyfin";
 
 const originalFetch = globalThis.fetch;
 
@@ -31,17 +31,59 @@ function mockJsonResponse(body: unknown, init?: ResponseInit): void {
   installFetchMock(fetchMock);
 }
 
-function mockJsonResponses(bodies: unknown[]): void {
-  let index = 0;
-  const fetchMock = mock(async () => {
-    if (index >= bodies.length) {
-      throw new Error("Unexpected Jellyfin request");
+interface SearchMockOptions {
+  MusicArtist?: unknown[];
+  MusicAlbum?: unknown[];
+  Audio?: unknown[];
+  /** Items the batched id lookup answers with; defaults to the Audio hints. */
+  enrichment?: unknown[];
+  /** Make the id lookup fail, to prove a search survives it. */
+  enrichmentStatus?: number;
+}
+
+interface SearchMockCalls {
+  /** includeItemTypes of each /Search/Hints request, in the order issued. */
+  hints: string[];
+  /** Item ids each batched lookup asked to resolve. */
+  enriched: string[][];
+}
+
+/**
+ * Route the two kinds of request a search makes by URL rather than by call
+ * order, so a test asserts on what was asked for instead of on how the
+ * concurrent fetches happened to interleave. Any other URL is an error.
+ */
+function mockSearch(options: SearchMockOptions): { calls: SearchMockCalls } {
+  const calls: SearchMockCalls = { hints: [], enriched: [] };
+
+  installFetchMock(async (input) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/Search/Hints") {
+      const type = url.searchParams.get("includeItemTypes") ?? "";
+      calls.hints.push(type);
+      const hints = options[type as keyof SearchMockOptions] ?? [];
+      const limit = Number(url.searchParams.get("limit"));
+      return Response.json({
+        SearchHints: (hints as unknown[]).slice(0, limit),
+      });
     }
-    const body = bodies[index];
-    index += 1;
-    return Response.json(body);
+
+    if (url.pathname.endsWith("/Items")) {
+      const ids = (url.searchParams.get("ids") ?? "").split(",");
+      calls.enriched.push(ids);
+      if (options.enrichmentStatus !== undefined) {
+        return new Response("", { status: options.enrichmentStatus });
+      }
+      return Response.json({
+        Items: options.enrichment ?? options.Audio ?? [],
+      });
+    }
+
+    throw new Error(`Unexpected Jellyfin request: ${url.pathname}`);
   });
-  installFetchMock(fetchMock);
+
+  return { calls };
 }
 
 function mockResponse(response: Response): void {
@@ -186,19 +228,184 @@ describe("JellyfinService search responses", () => {
     expect(error.message).toContain("SearchHints.0.Name");
   });
 
-  test("search is a single Jellyfin round-trip even when artists match", async () => {
-    // mockJsonResponses throws on any request beyond those provided, so a
-    // lone response proves matched artists trigger no follow-up fetches.
-    mockJsonResponses([
-      {
-        SearchHints: [{ Id: "artist-1", Name: "Artist", Type: "MusicArtist" }],
-      },
-    ]);
+  test("search fans out per type rather than per matched artist", async () => {
+    // mockSearch throws on any request it does not recognise, so this proves
+    // the fan-out is bounded by the number of types searched: matched artists
+    // never trigger a follow-up fetch of their own.
+    const { calls } = mockSearch({
+      MusicArtist: [{ Id: "artist-1", Name: "Artist", Type: "MusicArtist" }],
+    });
     const service = createAuthenticatedService();
 
     const results = await service.search("artist");
 
     expect(results.map((item) => item.Id)).toEqual(["artist-1"]);
+    expect(calls.hints).toEqual(["MusicArtist", "MusicAlbum", "Audio"]);
+    // Artists are the destination, so a lone artist hit needs no lookup.
+    expect(calls.enriched).toEqual([]);
+  });
+
+  test("albums carry the id of the artist their label names", async () => {
+    mockSearch({
+      MusicAlbum: [{ Id: "album-1", Name: "Homework", Type: "MusicAlbum" }],
+      enrichment: [
+        {
+          Id: "album-1",
+          Name: "Homework",
+          Type: "MusicAlbum",
+          AlbumArtists: [{ Id: "artist-1", Name: "Daft Punk" }],
+        },
+      ],
+    });
+    const service = createAuthenticatedService();
+
+    const [album] = await service.search("homework");
+
+    expect(album?.ArtistId).toBe("artist-1");
+  });
+
+  test("each type keeps its own slots when songs would fill the budget", async () => {
+    const { calls } = mockSearch({
+      MusicArtist: [{ Id: "artist-1", Name: "Grouplove", Type: "MusicArtist" }],
+      MusicAlbum: Array.from({ length: 20 }, (_, index) => ({
+        Id: `album-${index}`,
+        Name: `Love ${index}`,
+        Type: "MusicAlbum",
+      })),
+      Audio: Array.from({ length: 100 }, (_, index) => ({
+        Id: `track-${index}`,
+        Name: `Love ${index}`,
+        Type: "Audio",
+      })),
+    });
+    const service = createAuthenticatedService();
+
+    const results = await service.search("love", 30);
+    const byType = (type: string) =>
+      results.filter((item) => item.Type === type).length;
+
+    expect(byType("MusicArtist")).toBe(1);
+    expect(byType("MusicAlbum")).toBe(6);
+    // The four artist slots nothing matched are spent on tracks, not lost.
+    expect(byType("Audio")).toBe(23);
+    expect(results.length).toBe(30);
+    // Grouped in SEARCH_TYPES order, so a client can section them as they come.
+    expect(results[0]?.Type).toBe("MusicArtist");
+    expect(results.at(-1)?.Type).toBe("Audio");
+    expect(calls.hints).toEqual(["MusicArtist", "MusicAlbum", "Audio"]);
+  });
+
+  test("a scoped search spends the whole budget on that type", async () => {
+    const { calls } = mockSearch({
+      MusicAlbum: Array.from({ length: 40 }, (_, index) => ({
+        Id: `album-${index}`,
+        Name: `Love ${index}`,
+        Type: "MusicAlbum",
+      })),
+    });
+    const service = createAuthenticatedService();
+
+    const results = await service.search("love", 30, ["albums"]);
+
+    expect(results.length).toBe(30);
+    expect(calls.hints).toEqual(["MusicAlbum"]);
+  });
+
+  test("tracks carry the ids of the album and artist their labels name", async () => {
+    mockSearch({
+      Audio: [
+        {
+          Id: "track-1",
+          Name: "Daftendirekt",
+          Type: "Audio",
+          Artists: ["Daft Punk"],
+          Album: "Homework",
+          AlbumId: "album-1",
+        },
+      ],
+      enrichment: [
+        {
+          Id: "track-1",
+          Name: "Daftendirekt",
+          Type: "Audio",
+          Artists: ["Daft Punk"],
+          Album: "Homework",
+          AlbumId: "album-1",
+          ArtistItems: [{ Id: "artist-1", Name: "Daft Punk" }],
+        },
+      ],
+    });
+    const service = createAuthenticatedService();
+
+    const [track] = await service.search("daftendirekt");
+
+    expect(track?.AlbumId).toBe("album-1");
+    expect(track?.ArtistId).toBe("artist-1");
+  });
+
+  test("a failed id lookup costs the ids, not the search", async () => {
+    mockSearch({
+      Audio: [
+        {
+          Id: "track-1",
+          Name: "Daftendirekt",
+          Type: "Audio",
+          Album: "Homework",
+          AlbumId: "album-1",
+        },
+      ],
+      enrichmentStatus: 500,
+    });
+    const service = createAuthenticatedService();
+
+    const [track] = await service.search("daftendirekt");
+
+    expect(track?.Id).toBe("track-1");
+    expect(track?.AlbumId).toBe("album-1");
+    expect(track?.ArtistId).toBeUndefined();
+  });
+});
+
+describe("searchSlots", () => {
+  test("caps artists and albums, and fetches songs at the full budget", () => {
+    // Songs get the whole budget because the reserved types may under-deliver:
+    // whatever they leave has to be fillable with tracks.
+    expect(searchSlots(30, SEARCH_TYPES)).toEqual({
+      artists: 5,
+      albums: 6,
+      songs: 30,
+    });
+  });
+
+  test("caps the reserved types by share so a small budget still finds songs", () => {
+    expect(searchSlots(5, SEARCH_TYPES)).toEqual({
+      artists: 1,
+      albums: 1,
+      songs: 5,
+    });
+  });
+
+  test("a budget too small to divide goes entirely to the best matches", () => {
+    expect(searchSlots(1, SEARCH_TYPES)).toEqual({
+      artists: 0,
+      albums: 0,
+      songs: 1,
+    });
+  });
+
+  test("gives a single requested type the whole budget", () => {
+    expect(searchSlots(30, ["albums"])).toEqual({
+      artists: 0,
+      albums: 30,
+      songs: 0,
+    });
+  });
+
+  test("never lets a reserved type take the whole budget", () => {
+    for (const limit of [1, 2, 7, 20, 100]) {
+      const slots = searchSlots(limit, SEARCH_TYPES);
+      expect(slots.artists + slots.albums).toBeLessThan(limit);
+    }
   });
 });
 

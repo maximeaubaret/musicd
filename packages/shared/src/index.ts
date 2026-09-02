@@ -16,6 +16,7 @@ export type {
   JellyfinItem,
   MediaSource,
   PlaybackState,
+  SearchType,
   QueueMode,
   QueueItemBase,
   JellyfinQueueItem,
@@ -29,6 +30,7 @@ export type {
   YouTubeOperation,
   YouTubeErrorContext,
 } from "./types";
+export { SEARCH_TYPES } from "./types";
 export {
   JellyfinError,
   PlayerError,
@@ -47,6 +49,7 @@ export {
   PortStringSchema,
   QueueIndexStringSchema,
   SearchLimitStringSchema,
+  SearchTypesStringSchema,
   // Server schemas
   JellyfinConfigSchema,
   AudioConfigSchema,

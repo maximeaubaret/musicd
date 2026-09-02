@@ -4,10 +4,12 @@ import type {
   JellyfinConfig,
   JellyfinItem,
   AuthenticationResult,
+  SearchType,
   StoredAuth,
 } from "@musicd/shared";
 import {
   JellyfinError,
+  SEARCH_TYPES,
   loadAuth,
   saveAuth,
   getAuthFilePath,
@@ -53,29 +55,73 @@ const OptionalMediaSourcesSchema = z
   .nullish()
   .transform((value) => value ?? undefined);
 
+// Jellyfin names the artist and album a track belongs to in two places: bare
+// strings (Artists, AlbumArtist) and id/name pairs (ArtistItems, AlbumArtists).
+// Only the pairs can be opened, so both are read and flattened into ArtistId.
+const JellyfinNameIdPairsSchema = z
+  .array(z.object({ Id: z.string().min(1), Name: OptionalStringSchema }))
+  .nullish()
+  .transform((value) => value ?? undefined);
+
 const JellyfinItemSchema = z.object({
   Id: z.string().min(1),
   Name: z.string().min(1),
   Type: z.string().min(1),
   Artists: OptionalArtistsSchema,
   Album: OptionalStringSchema,
+  AlbumId: OptionalStringSchema,
   AlbumArtist: OptionalStringSchema,
+  AlbumArtists: JellyfinNameIdPairsSchema,
+  ArtistItems: JellyfinNameIdPairsSchema,
   RunTimeTicks: OptionalFiniteNumberSchema,
   ProductionYear: OptionalFiniteNumberSchema,
   IndexNumber: OptionalFiniteNumberSchema,
   MediaSources: OptionalMediaSourcesSchema,
 });
 
+type JellyfinItemPayload = z.infer<typeof JellyfinItemSchema>;
+
+// /Search/Hints answers with a narrower shape than /Items: it carries AlbumId
+// but no ArtistItems, which is why audio hints are enriched before they are
+// returned. See JellyfinService.search.
 const JellyfinSearchHintSchema = JellyfinItemSchema.pick({
   Id: true,
   Name: true,
   Type: true,
   Artists: true,
   Album: true,
+  AlbumId: true,
   AlbumArtist: true,
   RunTimeTicks: true,
   ProductionYear: true,
 });
+
+/**
+ * The one place a Jellyfin payload becomes a JellyfinItem. Every caller used to
+ * copy the fields it happened to need, so a field added here reached some
+ * endpoints and silently vanished from the rest.
+ */
+function toJellyfinItem(
+  item: JellyfinItemPayload | z.infer<typeof JellyfinSearchHintSchema>,
+): JellyfinItem {
+  const withPairs: Partial<JellyfinItemPayload> = item;
+  return {
+    Id: item.Id,
+    Name: item.Name,
+    Type: item.Type,
+    Artists: item.Artists ?? [],
+    Album: item.Album,
+    AlbumId: item.AlbumId,
+    AlbumArtist: item.AlbumArtist,
+    // Mirrors how the API picks a display artist (Artists first, album artist
+    // as the fallback) so the id and the label it sits behind never disagree.
+    ArtistId: withPairs.ArtistItems?.[0]?.Id ?? withPairs.AlbumArtists?.[0]?.Id,
+    RunTimeTicks: item.RunTimeTicks,
+    ProductionYear: item.ProductionYear,
+    IndexNumber: withPairs.IndexNumber,
+    MediaSources: withPairs.MediaSources,
+  };
+}
 
 const JellyfinSearchResponseSchema = z.object({
   SearchHints: z
@@ -98,6 +144,57 @@ const JellyfinItemsPageSchema = z.object({
     .transform((value) => value ?? []),
   TotalRecordCount: OptionalFiniteNumberSchema,
 });
+
+const SEARCH_TYPE_ITEM_TYPES: Record<SearchType, string> = {
+  artists: "MusicArtist",
+  albums: "MusicAlbum",
+  songs: "Audio",
+};
+
+// How many results the crowd-out-prone types may contribute before the rest of
+// a search budget goes to tracks. Songs are deliberately absent: they are the
+// fallthrough that spends whatever the other types leave.
+const SEARCH_TYPE_CEILINGS: Partial<Record<SearchType, number>> = {
+  artists: 5,
+  albums: 8,
+};
+
+// The ceilings above are absolute, which on a small budget would leave nothing
+// for tracks. Never let a reserved type take more than this share of one — and
+// on a budget too small to divide, none of it: asking for one result means
+// asking for the single best match, not for an artist.
+const SEARCH_TYPE_MAX_SHARE = 0.2;
+
+/**
+ * How many results to fetch per type for one search.
+ *
+ * This is a fetch budget, not an allocation: the caller concatenates the
+ * groups in SEARCH_TYPES order and truncates to `limit`. Songs are fetched at
+ * the full budget so that slots the reserved types do not fill — a query
+ * matching one artist and no albums — still come back as tracks instead of
+ * going unspent.
+ *
+ * The ceilings only exist to stop one type crowding out another, so a query
+ * scoped to a single type gets the whole budget.
+ */
+export function searchSlots(
+  limit: number,
+  types: readonly SearchType[],
+): Record<SearchType, number> {
+  const slots: Record<SearchType, number> = { artists: 0, albums: 0, songs: 0 };
+  const requested = SEARCH_TYPES.filter((type) => types.includes(type));
+  const share = Math.floor(limit * SEARCH_TYPE_MAX_SHARE);
+
+  for (const type of requested) {
+    const ceiling = SEARCH_TYPE_CEILINGS[type];
+    slots[type] =
+      ceiling === undefined || requested.length === 1
+        ? limit
+        : Math.min(ceiling, share);
+  }
+
+  return slots;
+}
 
 export type BrowseKind = "albums" | "artists" | "playlists" | "songs";
 
@@ -326,13 +423,25 @@ export class JellyfinService {
   }
 
   /**
-   * Search for audio items in Jellyfin library
-   * Uses hybrid approach:
-   * 1. /Search/Hints for quick name-based matches
-   * 2. If artist found, also fetches all albums by that artist
+   * Search the library, giving each item type its own share of the result
+   * budget.
+   *
+   * One /Search/Hints call across all three types returns them in a single
+   * relevance order, and songs outnumber albums and artists by orders of
+   * magnitude: "love" fills all 100 slots with tracks while 20 matching albums
+   * and a matching artist never appear. So each type is searched separately and
+   * the budget is spent in SEARCH_TYPES order, capped per type so a broad query
+   * cannot bury the tracks either.
+   *
+   * The hits are then enriched in one batched /Items call, because
+   * /Search/Hints carries AlbumId but not the artist id a client needs to open
+   * the artist behind a track's or an album's label.
    */
-  async search(query: string, limit: number = 50): Promise<JellyfinItem[]> {
-    // Ensure we're authenticated
+  async search(
+    query: string,
+    limit: number = 50,
+    types: readonly SearchType[] = SEARCH_TYPES,
+  ): Promise<JellyfinItem[]> {
     if (!this.isAuthenticated()) {
       throw new JellyfinError(
         "Not authenticated. Please run setup first.",
@@ -341,66 +450,126 @@ export class JellyfinService {
     }
 
     try {
-      // Step 1: Get quick search hints
-      const params = new URLSearchParams({
-        searchTerm: query,
-        userId: this.userId!,
-        limit: limit.toString(),
-        includeMedia: "true",
-      });
-
-      params.append("includeItemTypes", "Audio,MusicAlbum,MusicArtist");
-
-      const response = await this.loggedFetch(
-        `${this.config.serverUrl}/Search/Hints?${params}`,
-        {
-          headers: this.getHeaders(),
-        },
+      const slots = searchSlots(limit, types);
+      const groups = await Promise.all(
+        SEARCH_TYPES.filter((type) => slots[type] > 0).map(async (type) => ({
+          type,
+          hints: await this.fetchSearchHints(query, type, slots[type]),
+        })),
       );
 
-      if (response.status === 401) {
-        throw new JellyfinError(
-          "Authentication token is invalid or expired. Please run setup again.",
-          401,
-        );
+      const items: JellyfinItem[] = [];
+      for (const group of groups) {
+        items.push(...group.hints.map(toJellyfinItem));
       }
 
-      if (!response.ok) {
-        throw new JellyfinError(
-          `Failed to search: ${response.statusText}`,
-          response.status,
-        );
-      }
-
-      const result = await parseJellyfinResponse(
-        response,
-        JellyfinSearchResponseSchema,
-        "searching for items",
-      );
-      const searchHints = result.SearchHints;
-
-      // Map SearchHint results to JellyfinItem format. This is deliberately a
-      // single Jellyfin round-trip: expanding matched artists into their
-      // albums here used to add one request per artist on every query, and
-      // clients that want an artist's discography can drill down explicitly.
-      const items: JellyfinItem[] = searchHints.map((hint) => ({
-        Id: hint.Id,
-        Name: hint.Name,
-        Type: hint.Type,
-        Artists: hint.Artists || [],
-        Album: hint.Album,
-        AlbumArtist: hint.AlbumArtist,
-        RunTimeTicks: hint.RunTimeTicks,
-        ProductionYear: hint.ProductionYear,
-      }));
-
-      return items.slice(0, limit);
+      return await this.withRelatedIds(items.slice(0, limit));
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
       }
       throw new JellyfinError(`Error searching items: ${error}`);
     }
+  }
+
+  private async fetchSearchHints(
+    query: string,
+    type: SearchType,
+    limit: number,
+  ): Promise<z.infer<typeof JellyfinSearchResponseSchema>["SearchHints"]> {
+    const params = new URLSearchParams({
+      searchTerm: query,
+      userId: this.userId!,
+      limit: limit.toString(),
+      includeMedia: "true",
+      includeItemTypes: SEARCH_TYPE_ITEM_TYPES[type],
+    });
+
+    const response = await this.loggedFetch(
+      `${this.config.serverUrl}/Search/Hints?${params}`,
+      { headers: this.getHeaders() },
+    );
+
+    if (response.status === 401) {
+      throw new JellyfinError(
+        "Authentication token is invalid or expired. Please run setup again.",
+        401,
+      );
+    }
+
+    if (!response.ok) {
+      throw new JellyfinError(
+        `Failed to search: ${response.statusText}`,
+        response.status,
+      );
+    }
+
+    const result = await parseJellyfinResponse(
+      response,
+      JellyfinSearchResponseSchema,
+      "searching for items",
+    );
+
+    return result.SearchHints.slice(0, limit);
+  }
+
+  /**
+   * Fill in the album and artist ids /Search/Hints leaves out, in one batched
+   * lookup. Artists need nothing resolved — they are the destination — so only
+   * songs and albums are looked up.
+   *
+   * A failure here costs the ids, not the search: the results are still
+   * playable and still open, they just cannot be navigated sideways from.
+   */
+  private async withRelatedIds(items: JellyfinItem[]): Promise<JellyfinItem[]> {
+    const unresolved = items
+      .filter((item) => item.Type !== "MusicArtist")
+      .map((item) => item.Id);
+
+    if (unresolved.length === 0) {
+      return items;
+    }
+
+    let byId: Map<string, JellyfinItem>;
+    try {
+      const params = new URLSearchParams({
+        ids: unresolved.join(","),
+        userId: this.userId!,
+      });
+
+      const response = await this.loggedFetch(
+        `${this.config.serverUrl}/Users/${this.userId}/Items?${params}`,
+        { headers: this.getHeaders() },
+      );
+
+      if (!response.ok) {
+        return items;
+      }
+
+      const result = await parseJellyfinResponse(
+        response,
+        JellyfinItemsResponseSchema,
+        "resolving search result ids",
+      );
+      byId = new Map(
+        result.Items.map((item) => [item.Id, toJellyfinItem(item)]),
+      );
+    } catch (error) {
+      logger.warn(`Could not resolve search result ids: ${error}`);
+      return items;
+    }
+
+    return items.map((item) => {
+      const resolved = byId.get(item.Id);
+      if (!resolved) {
+        return item;
+      }
+      return {
+        ...item,
+        AlbumId: item.AlbumId ?? resolved.AlbumId,
+        ArtistId: resolved.ArtistId,
+      };
+    });
   }
 
   /**
@@ -451,15 +620,7 @@ export class JellyfinService {
       );
       const items = result.Items;
 
-      return items.map((item) => ({
-        Id: item.Id,
-        Name: item.Name,
-        Type: item.Type,
-        Artists: item.Artists || [],
-        Album: item.Album,
-        AlbumArtist: item.AlbumArtist,
-        RunTimeTicks: item.RunTimeTicks,
-      }));
+      return items.map(toJellyfinItem);
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
@@ -516,15 +677,7 @@ export class JellyfinService {
       );
       const items = result.Items;
 
-      return items.map((item) => ({
-        Id: item.Id,
-        Name: item.Name,
-        Type: item.Type,
-        Artists: item.Artists || [],
-        Album: item.Album,
-        AlbumArtist: item.AlbumArtist,
-        RunTimeTicks: item.RunTimeTicks,
-      }));
+      return items.map(toJellyfinItem);
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
@@ -583,16 +736,7 @@ export class JellyfinService {
         "fetching artist albums",
       );
 
-      return result.Items.map((item) => ({
-        Id: item.Id,
-        Name: item.Name,
-        Type: item.Type,
-        Artists: item.Artists || [],
-        Album: item.Album,
-        AlbumArtist: item.AlbumArtist,
-        RunTimeTicks: item.RunTimeTicks,
-        ProductionYear: item.ProductionYear,
-      }));
+      return result.Items.map(toJellyfinItem);
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
@@ -643,7 +787,9 @@ export class JellyfinService {
         "fetching playlist tracks",
       );
 
-      return result.Items.filter((item) => item.Type === "Audio");
+      return result.Items.filter((item) => item.Type === "Audio").map(
+        toJellyfinItem,
+      );
     } catch (error) {
       if (error instanceof JellyfinError) {
         throw error;
@@ -764,7 +910,7 @@ export class JellyfinService {
       );
 
       return {
-        items: result.Items,
+        items: result.Items.map(toJellyfinItem),
         total: result.TotalRecordCount ?? result.Items.length,
       };
     } catch (error) {
@@ -834,7 +980,7 @@ export class JellyfinService {
       );
 
       return {
-        items: result.Items,
+        items: result.Items.map(toJellyfinItem),
         total: result.TotalRecordCount ?? result.Items.length,
       };
     } catch (error) {

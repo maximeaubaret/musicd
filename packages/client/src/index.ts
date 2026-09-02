@@ -2,6 +2,8 @@ import type { ZodError, ZodType } from "zod";
 
 import { isCredentialKey } from "@musicd/shared";
 
+import type { SearchType } from "@musicd/shared";
+
 import {
   ActionResponseSchema,
   AlbumResponseSchema,
@@ -29,6 +31,7 @@ import {
 import type {
   ActionResponse,
   AuthResponse,
+  LibraryItem,
   PlayResponse,
   PlaybackActionResponse,
   QueueAddResponse,
@@ -57,6 +60,7 @@ import type {
 export type {
   ActionResponse,
   AuthResponse,
+  LibraryItem,
   PlayResponse,
   PlaybackActionResponse,
   QueueAddResponse,
@@ -320,13 +324,22 @@ export class MusicDaemonClient {
   }
 
   /**
-   * Search for music items
+   * Search for music items.
+   *
+   * `limit` is the total result budget, divided between the requested types so
+   * that tracks cannot crowd out matching albums and artists. Pass `types` to
+   * scope the search, which then spends the whole budget on those types.
    */
-  async search(query: string, limit = 20): Promise<SearchResponse> {
-    return this.request(
-      `/search?q=${encodeURIComponent(query)}&limit=${limit}`,
-      SearchResponseSchema,
-    );
+  async search(
+    query: string,
+    limit = 20,
+    types?: readonly SearchType[],
+  ): Promise<SearchResponse> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    if (types?.length) {
+      params.set("type", types.join(","));
+    }
+    return this.request(`/search?${params}`, SearchResponseSchema);
   }
 
   /** Browse a page of the Jellyfin music library. */

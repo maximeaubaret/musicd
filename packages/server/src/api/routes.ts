@@ -10,7 +10,9 @@ import {
   APP_VERSION,
   createJellyfinQueueItems,
   QueueIndexStringSchema,
+  SEARCH_TYPES,
   SearchLimitStringSchema,
+  SearchTypesStringSchema,
 } from "@musicd/shared";
 
 import { YouTubeService } from "../services/youtube";
@@ -155,6 +157,44 @@ async function resolveJellyfinQueueItems(
     }
     throw new JellyfinError(`Error resolving queue items: ${error}`);
   }
+}
+
+/**
+ * The single JSON shape every item-returning route answers with. Six routes
+ * each listed the fields they happened to want, so `albumId` and `artistId`
+ * would have reached search results and quietly gone missing from album,
+ * artist, playlist and library tracks.
+ *
+ * `artist` and `album` are labels; `artistId` and `albumId` are what a client
+ * needs to open what those labels name. They are absent rather than empty when
+ * Jellyfin has no id to give.
+ */
+function toApiItem(item: JellyfinItem): ApiItem {
+  return {
+    id: item.Id,
+    name: item.Name,
+    type: item.Type,
+    artist: item.Artists?.[0] || item.AlbumArtist,
+    artistId: item.ArtistId,
+    album: item.Album,
+    albumId: item.AlbumId,
+    duration: item.RunTimeTicks ? Math.floor(item.RunTimeTicks / 10000000) : 0,
+    year: item.ProductionYear,
+    indexNumber: item.IndexNumber,
+  };
+}
+
+interface ApiItem {
+  id: string;
+  name: string;
+  type: string;
+  artist?: string;
+  artistId?: string;
+  album?: string;
+  albumId?: string;
+  duration: number;
+  year?: number;
+  indexNumber?: number;
 }
 
 function createUnauthorizedResponse(
@@ -1253,23 +1293,30 @@ export function createApiRoutes(
       }
       const limit = limitResult.data;
 
-      const results = await jellyfinService.search(query, limit);
+      const typeStr = c.req.query("type");
+      const typesResult =
+        typeStr === undefined
+          ? { success: true as const, data: SEARCH_TYPES }
+          : SearchTypesStringSchema.safeParse(typeStr);
+      if (!typesResult.success) {
+        return c.json(
+          {
+            success: false,
+            error: `Type must be a comma-separated subset of: ${SEARCH_TYPES.join(", ")}`,
+          },
+          400,
+        );
+      }
+      const types = typesResult.data;
+
+      const results = await jellyfinService.search(query, limit, types);
 
       return c.json({
         success: true,
         query,
+        types,
         count: results.length,
-        results: results.map((item) => ({
-          id: item.Id,
-          name: item.Name,
-          type: item.Type,
-          artist: item.Artists?.[0] || item.AlbumArtist,
-          album: item.Album,
-          duration: item.RunTimeTicks
-            ? Math.floor(item.RunTimeTicks / 10000000)
-            : 0,
-          year: item.ProductionYear,
-        })),
+        results: results.map(toApiItem),
       });
     } catch (error) {
       if (error instanceof JellyfinError) {
@@ -1333,20 +1380,10 @@ export function createApiRoutes(
           id: album.Id,
           name: album.Name,
           artist: album.AlbumArtist || album.Artists?.[0],
+          artistId: album.ArtistId,
           type: album.Type,
         },
-        tracks: tracks.map((track) => ({
-          id: track.Id,
-          name: track.Name,
-          type: track.Type,
-          artist: track.Artists?.[0],
-          album: track.Album,
-          duration: track.RunTimeTicks
-            ? Math.floor(track.RunTimeTicks / 10000000)
-            : 0,
-          year: track.ProductionYear,
-          indexNumber: track.IndexNumber,
-        })),
+        tracks: tracks.map(toApiItem),
         count: tracks.length,
       });
     } catch (error) {
@@ -1412,17 +1449,7 @@ export function createApiRoutes(
           name: artist.Name,
           type: artist.Type,
         },
-        tracks: tracks.map((track) => ({
-          id: track.Id,
-          name: track.Name,
-          type: track.Type,
-          artist: track.Artists?.[0],
-          album: track.Album,
-          duration: track.RunTimeTicks
-            ? Math.floor(track.RunTimeTicks / 10000000)
-            : 0,
-          year: track.ProductionYear,
-        })),
+        tracks: tracks.map(toApiItem),
         count: tracks.length,
       });
     } catch (error) {
@@ -1488,13 +1515,7 @@ export function createApiRoutes(
           name: artist.Name,
           type: artist.Type,
         },
-        albums: albums.map((album) => ({
-          id: album.Id,
-          name: album.Name,
-          type: album.Type,
-          artist: album.AlbumArtist || album.Artists?.[0],
-          year: album.ProductionYear,
-        })),
+        albums: albums.map(toApiItem),
         count: albums.length,
       });
     } catch (error) {
@@ -1542,18 +1563,7 @@ export function createApiRoutes(
           name: playlist.Name,
           type: playlist.Type,
         },
-        tracks: tracks.map((track) => ({
-          id: track.Id,
-          name: track.Name,
-          type: track.Type,
-          artist: track.Artists?.[0],
-          album: track.Album,
-          duration: track.RunTimeTicks
-            ? Math.floor(track.RunTimeTicks / 10000000)
-            : 0,
-          year: track.ProductionYear,
-          indexNumber: track.IndexNumber,
-        })),
+        tracks: tracks.map(toApiItem),
         count: tracks.length,
       });
     } catch (error) {
@@ -1626,17 +1636,7 @@ export function createApiRoutes(
         limit: limitResult.data,
         total: page.total,
         count: page.items.length,
-        items: page.items.map((item) => ({
-          id: item.Id,
-          name: item.Name,
-          type: item.Type,
-          artist: item.Artists?.[0] || item.AlbumArtist,
-          album: item.Album,
-          duration: item.RunTimeTicks
-            ? Math.floor(item.RunTimeTicks / 10000000)
-            : 0,
-          year: item.ProductionYear,
-        })),
+        items: page.items.map(toApiItem),
       });
     } catch (error) {
       if (error instanceof JellyfinError) {
@@ -1747,17 +1747,7 @@ export function createApiRoutes(
         limit: limitResult.data,
         total: page.total,
         count: page.items.length,
-        items: page.items.map((item) => ({
-          id: item.Id,
-          name: item.Name,
-          type: item.Type,
-          artist: item.Artists?.[0] || item.AlbumArtist,
-          album: item.Album,
-          duration: item.RunTimeTicks
-            ? Math.floor(item.RunTimeTicks / 10000000)
-            : 0,
-          year: item.ProductionYear,
-        })),
+        items: page.items.map(toApiItem),
       });
     } catch (error) {
       if (error instanceof JellyfinError) {

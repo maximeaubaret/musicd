@@ -3,6 +3,7 @@ import type {
   PlaybackStatus,
   QueueItem,
   QueueMode,
+  SearchType,
 } from "@musicd/shared";
 
 export interface AuthResponse {
@@ -67,19 +68,33 @@ export interface PlayQueueResponse {
   queueLength: number;
 }
 
-export interface SearchResult {
+/**
+ * The shape every item-returning daemon endpoint answers with, whatever the
+ * item is: a song, an album, an artist or a playlist. `SearchResult` and
+ * `TrackInfo` are the two names callers already knew it by.
+ */
+export interface LibraryItem {
   id: string;
   name: string;
   type: string;
   artist?: string;
+  /** Id of `artist`, when Jellyfin knows one. Absent on artists themselves. */
+  artistId?: string;
   album?: string;
+  /** Id of `album`, when Jellyfin knows one. Absent on albums themselves. */
+  albumId?: string;
   duration: number;
   year?: number;
+  indexNumber?: number;
 }
+
+export type SearchResult = LibraryItem;
 
 export interface SearchResponse {
   success: boolean;
   query: string;
+  /** The types actually searched, in the order the results are grouped by. */
+  types: SearchType[];
   count: number;
   results: SearchResult[];
 }
@@ -108,16 +123,7 @@ export interface FavoritesResponse {
   items: SearchResult[];
 }
 
-export interface TrackInfo {
-  id: string;
-  name: string;
-  type: string;
-  artist?: string;
-  album?: string;
-  duration: number;
-  year?: number;
-  indexNumber?: number;
-}
+export type TrackInfo = LibraryItem;
 
 export interface AlbumResponse {
   success: boolean;
@@ -125,6 +131,7 @@ export interface AlbumResponse {
     id: string;
     name: string;
     artist?: string;
+    artistId?: string;
     type: string;
   };
   tracks: TrackInfo[];
