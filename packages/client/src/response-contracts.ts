@@ -7,6 +7,7 @@ import type { PlaybackStatus, QueueItem } from "@musicd/shared";
 import type {
   ActionResponse,
   AlbumResponse,
+  ArtistAlbumsResponse,
   ArtistResponse,
   AuthResponse,
   FavoriteUpdateResponse,
@@ -22,6 +23,7 @@ import type {
   QueueResponse,
   QueueUpdateResponse,
   SearchResponse,
+  SeekResponse,
   VolumeResponse,
 } from "./types";
 
@@ -199,6 +201,12 @@ export const QueueModeStatusResponseSchema: z.ZodType<QueueModeStatusResponse> =
     queueMode: QueueModeSchema,
   });
 
+export const SeekResponseSchema: z.ZodType<SeekResponse> = z.object({
+  success: SuccessSchema,
+  message: z.string(),
+  position: z.number().finite().nonnegative(),
+});
+
 export const VolumeResponseSchema: z.ZodType<VolumeResponse> = z.object({
   success: SuccessSchema,
   volume: z.number().finite().min(0).max(100),
@@ -255,6 +263,18 @@ export const ArtistResponseSchema: z.ZodType<ArtistResponse> = z.object({
   tracks: z.array(TrackInfoSchema),
   count: z.number().int().nonnegative(),
 });
+
+export const ArtistAlbumsResponseSchema: z.ZodType<ArtistAlbumsResponse> =
+  z.object({
+    success: SuccessSchema,
+    artist: z.object({
+      id: z.string(),
+      name: z.string(),
+      type: z.string(),
+    }),
+    albums: z.array(LibraryItemSchema),
+    count: z.number().int().nonnegative(),
+  });
 
 export const PlaylistResponseSchema: z.ZodType<PlaylistResponse> = z.object({
   success: SuccessSchema,

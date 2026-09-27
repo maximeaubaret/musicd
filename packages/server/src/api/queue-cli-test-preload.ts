@@ -20,6 +20,7 @@ interface CliScenario {
   expectedQueueIds: string[];
   expectedQueuePosition: number;
   initialQueueMode?: QueueMode;
+  initialSeekPosition?: number;
 }
 
 const currentTrack: JellyfinItem = {
@@ -40,6 +41,20 @@ const selectedTrack: JellyfinItem = {
   RunTimeTicks: 1_800_000_000,
 };
 
+const testAlbum: JellyfinItem = {
+  Id: "album-id",
+  Name: "Test Album",
+  Type: "MusicAlbum",
+  AlbumArtist: "Test Artist",
+  ProductionYear: 1999,
+};
+
+const testArtist: JellyfinItem = {
+  Id: "artist-id",
+  Name: "Test Artist",
+  Type: "MusicArtist",
+};
+
 const [currentQueueItem] = createJellyfinQueueItems([currentTrack]);
 const youtubeQueueItem: QueueItem = {
   id: "youtube-id",
@@ -50,6 +65,13 @@ const youtubeQueueItem: QueueItem = {
   youtubeUrl: "https://www.youtube.com/watch?v=test-video",
   videoId: "test-video",
   uploader: "Video Artist",
+};
+
+const unknownLengthQueueItem: QueueItem = {
+  ...youtubeQueueItem,
+  id: "live-id",
+  name: "Live Stream",
+  duration: 0,
 };
 
 const scenarios: Record<string, CliScenario> = {
@@ -94,6 +116,15 @@ const scenarios: Record<string, CliScenario> = {
     expectedQueuePosition: -1,
     initialQueueMode: { loop: true, random: false },
   },
+  "unknown-length-playing": {
+    initialQueue: [unknownLengthQueueItem],
+    initiallyPlaying: true,
+    expectedState: "playing",
+    expectedCurrentItemId: "live-id",
+    expectedQueueIds: ["live-id"],
+    expectedQueuePosition: 0,
+    initialSeekPosition: 120,
+  },
   "queue-interaction": {
     initialQueue: [currentQueueItem, youtubeQueueItem],
     initiallyPlaying: true,
@@ -117,6 +148,8 @@ const scenario = getScenario(process.env.MUSICD_CLI_TEST_SCENARIO);
 const itemsById: Record<string, JellyfinItem> = {
   [currentTrack.Id]: currentTrack,
   [selectedTrack.Id]: selectedTrack,
+  [testAlbum.Id]: testAlbum,
+  [testArtist.Id]: testArtist,
 };
 
 function failIfCalled(): never {
@@ -125,10 +158,13 @@ function failIfCalled(): never {
 
 const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
-  browse: failIfCalled,
+  browse: async (kind, startIndex = 0) =>
+    kind === "albums"
+      ? { items: [testAlbum].slice(startIndex), total: 1 }
+      : { items: [], total: 0 },
   browseFavorites: failIfCalled,
-  getAlbumTracks: failIfCalled,
-  getArtistAlbums: failIfCalled,
+  getAlbumTracks: async () => [currentTrack, selectedTrack],
+  getArtistAlbums: async () => [testAlbum],
   getArtistTracks: failIfCalled,
   getArtwork: failIfCalled,
   getItem: async (id) => {
@@ -160,6 +196,9 @@ if (scenario.initialQueueMode) {
 }
 if (scenario.initiallyPlaying) {
   await player.playFromQueue(0);
+}
+if (scenario.initialSeekPosition !== undefined) {
+  await player.seek(scenario.initialSeekPosition);
 }
 
 const app = createApp({

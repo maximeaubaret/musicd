@@ -319,6 +319,12 @@ export class PlayerService {
     if (!item || !this.backend.isPlaying()) {
       throw new PlayerError("Nothing is playing");
     }
+    // A zero duration means the length is unknown (e.g. some streams).
+    if (item.duration > 0 && positionSeconds > item.duration) {
+      throw new PlayerError(
+        `Position ${positionSeconds}s is past the end of the track (${item.duration}s)`,
+      );
+    }
 
     // Backends with native seeking (mpv) reposition in place — no restart,
     // no audio gap, pause state preserved.
@@ -677,7 +683,8 @@ export class PlayerService {
             source: this.currentItem.source,
           }
         : null,
-      position: Math.min(position, duration),
+      // A zero duration means the length is unknown, so it cannot cap position.
+      position: duration > 0 ? Math.min(position, duration) : position,
       duration,
       queue: this.queue,
       queuePosition: this.queuePosition,

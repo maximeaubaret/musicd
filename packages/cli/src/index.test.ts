@@ -328,6 +328,232 @@ describe("CLI queue intent", () => {
   });
 });
 
+describe("CLI playback controls", () => {
+  const playing = { MUSICD_CLI_TEST_SCENARIO: "queue-interaction" };
+
+  test("seek accepts clock times and reports the new position", async () => {
+    const human = await runCli(["seek", "1:30"], playing);
+    const json = await runCli(["--json", "seek", "90"], playing);
+
+    expect(human.exitCode).toBe(0);
+    expect(human.stderr).toBe("");
+    expect(human.stdout).toContain("Seeked to 1:30");
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      success: true,
+      position: 90,
+    });
+  });
+
+  test("seek treats signed values as offsets from the current position", async () => {
+    const forward = await runCli(["--json", "seek", "+15"], playing);
+    const back = await runCli(["--json", "seek", "-10"], playing);
+
+    expect(forward.exitCode).toBe(0);
+    expect(JSON.parse(forward.stdout)).toMatchObject({ position: 15 });
+    expect(back.exitCode).toBe(0);
+    expect(JSON.parse(back.stdout)).toMatchObject({ position: 0 });
+  });
+
+  test("a relative seek stops at the end of the track", async () => {
+    const result = await runCli(["--json", "seek", "+10:00"], playing);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ position: 180 });
+  });
+
+  test("a relative seek on a track of unknown length starts from the current position", async () => {
+    const unknownLength = {
+      MUSICD_CLI_TEST_SCENARIO: "unknown-length-playing",
+    };
+    const forward = await runCli(["--json", "seek", "+10"], unknownLength);
+    const back = await runCli(["--json", "seek", "-10"], unknownLength);
+
+    expect(JSON.parse(forward.stdout)).toMatchObject({ position: 130 });
+    expect(JSON.parse(back.stdout)).toMatchObject({ position: 110 });
+  });
+
+  test("an absolute seek past the end of the track fails", async () => {
+    const result = await runCli(["seek", "5:00"], playing);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Position 300s is past the end of the track (180s)",
+    );
+  });
+
+  test("seek and volume report mistyped options as unknown options", async () => {
+    for (const args of [
+      ["seek", "--fast"],
+      ["seek", "10", "--fast"],
+      ["seek", "-10", "--fast"],
+      ["volume", "--fast"],
+      ["vol", "+5", "--fast"],
+    ]) {
+      const result = await runCli(args, playing);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("error: unknown option '--fast'");
+    }
+  });
+
+  test("global options still apply after a relative value", async () => {
+    const result = await runCli(["seek", "-10", "--json"], playing);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ position: 0 });
+  });
+
+  test("seek rejects malformed positions before contacting the daemon", async () => {
+    const result = await runCli(["seek", "1:75"], playing);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Position must be seconds or [h:]m:ss");
+  });
+
+  test("volume reads, sets, and adjusts the playback volume", async () => {
+    const read = await runCli(["volume"], playing);
+    const set = await runCli(["--json", "volume", "40"], playing);
+    const lowered = await runCli(["--json", "volume", "-30"], playing);
+
+    expect(read.exitCode).toBe(0);
+    expect(read.stdout).toContain("Volume: 100%");
+    expect(JSON.parse(set.stdout)).toEqual({ success: true, volume: 40 });
+    expect(JSON.parse(lowered.stdout)).toEqual({ success: true, volume: 70 });
+  });
+
+  test("volume rejects levels outside 0-100", async () => {
+    const result = await runCli(["volume", "150"], playing);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Volume must be 0-100, or +N/-N to adjust");
+  });
+});
+
+describe("CLI queue positions", () => {
+  const queueScenario = { MUSICD_CLI_TEST_SCENARIO: "queue-interaction" };
+
+  test("queue play starts the track at a displayed position", async () => {
+    const result = await runCli(["queue", "play", "2"], queueScenario);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Playing: YouTube Track");
+    expect(result.stdout).toContain("Queue: 2/2");
+  });
+
+  test("queue remove drops the track at a displayed position", async () => {
+    const human = await runCli(["queue", "remove", "2"], queueScenario);
+    const json = await runCli(["--json", "queue", "rm", "2"], queueScenario);
+
+    expect(human.exitCode).toBe(0);
+    expect(human.stderr).toBe("");
+    expect(human.stdout).toContain("Removed track 2");
+    expect(human.stdout).toContain("1 track left");
+    const removed = JSON.parse(json.stdout);
+    expect(removed.queue.map((item: { id: string }) => item.id)).toEqual([
+      "current-id",
+    ]);
+  });
+
+  test("queue positions must be positive integers", async () => {
+    const result = await runCli(["queue", "play", "0"], queueScenario);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Position must be a positive integer");
+  });
+
+  test("positions past the end of the queue fail with the daemon's reason", async () => {
+    const result = await runCli(
+      ["--json", "queue", "remove", "5"],
+      queueScenario,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).error).toBeString();
+  });
+});
+
+describe("CLI library browsing", () => {
+  const scenario = { MUSICD_CLI_TEST_SCENARIO: "queue-interaction" };
+
+  test("library lists albums by default with their IDs", async () => {
+    const result = await runCli(["library"], scenario);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("1 album");
+    expect(result.stdout).toContain("Test Album");
+    expect(result.stdout).toContain("[album-id]");
+  });
+
+  test("library reports an empty kind and emits JSON pages", async () => {
+    const empty = await runCli(["library", "artists"], scenario);
+    const json = await runCli(["--json", "library", "albums"], scenario);
+
+    expect(empty.exitCode).toBe(0);
+    expect(empty.stdout).toContain("No artists found");
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      kind: "albums",
+      total: 1,
+      items: [{ id: "album-id" }],
+    });
+  });
+
+  test("library explains an offset past the end of a non-empty kind", async () => {
+    const result = await runCli(["library", "--offset", "5"], scenario);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("No albums past offset 5 (1 total)");
+  });
+
+  test("library rejects unknown kinds", async () => {
+    const result = await runCli(["library", "videos"], scenario);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      'Kind must be one of "albums", "artists", "playlists", or "songs"',
+    );
+  });
+
+  test("album shows its tracks with their IDs", async () => {
+    const result = await runCli(["album", "album-id"], scenario);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Test Album");
+    expect(result.stdout).toContain("Test Artist");
+    expect(result.stdout).toContain("2 tracks");
+    expect(result.stdout).toContain("1. Current Track");
+    expect(result.stdout).toContain("[track-id]");
+  });
+
+  test("artist shows its albums with their IDs", async () => {
+    const human = await runCli(["artist", "artist-id"], scenario);
+    const json = await runCli(["--json", "artist", "artist-id"], scenario);
+
+    expect(human.exitCode).toBe(0);
+    expect(human.stderr).toBe("");
+    expect(human.stdout).toContain("Test Artist");
+    expect(human.stdout).toContain("1 album");
+    expect(human.stdout).toContain("Test Album (1999)");
+    expect(human.stdout).toContain("[album-id]");
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      artist: { id: "artist-id" },
+      albums: [{ id: "album-id" }],
+    });
+  });
+
+  test("album rejects IDs that are not albums", async () => {
+    const result = await runCli(["--json", "album", "artist-id"], scenario);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: "Item is not an album",
+    });
+  });
+});
+
 describe("CLI integer input validation", () => {
   test("--port rejects malformed, empty, and out-of-range values", async () => {
     for (const port of ["1junk", "1.5", "", "0", "65536"]) {

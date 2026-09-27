@@ -7,6 +7,7 @@ import type { SearchType } from "@musicd/shared";
 import {
   ActionResponseSchema,
   AlbumResponseSchema,
+  ArtistAlbumsResponseSchema,
   ArtistResponseSchema,
   AuthResponseSchema,
   DaemonErrorResponseSchema,
@@ -25,6 +26,7 @@ import {
   QueueShuffleResponseSchema,
   QueueUpdateResponseSchema,
   SearchResponseSchema,
+  SeekResponseSchema,
   VolumeResponseSchema,
 } from "./response-contracts";
 
@@ -42,6 +44,7 @@ import type {
   SearchResult,
   TrackInfo,
   AlbumResponse,
+  ArtistAlbumsResponse,
   ArtistResponse,
   FavoriteKind,
   FavoriteUpdateResponse,
@@ -54,6 +57,7 @@ import type {
   QueueModeResponse,
   QueueModeStatusResponse,
   QueueMode,
+  SeekResponse,
   VolumeResponse,
 } from "./types";
 
@@ -71,6 +75,7 @@ export type {
   SearchResult,
   TrackInfo,
   AlbumResponse,
+  ArtistAlbumsResponse,
   ArtistResponse,
   FavoriteKind,
   FavoriteUpdateResponse,
@@ -83,6 +88,7 @@ export type {
   QueueModeResponse,
   QueueModeStatusResponse,
   QueueMode,
+  SeekResponse,
   VolumeResponse,
 };
 
@@ -420,6 +426,13 @@ export class MusicDaemonClient {
   }
 
   /**
+   * Seek to a position, in seconds, within the current track.
+   */
+  async seek(position: number): Promise<SeekResponse> {
+    return this.request("/seek", SeekResponseSchema, "POST", { position });
+  }
+
+  /**
    * Get native per-stream playback volume.
    */
   async getVolume(): Promise<VolumeResponse> {
@@ -552,14 +565,28 @@ export class MusicDaemonClient {
    * Get album details with tracks
    */
   async getAlbum(albumId: string): Promise<AlbumResponse> {
-    return this.request(`/album/${albumId}`, AlbumResponseSchema);
+    return this.request(
+      `/album/${encodeURIComponent(albumId)}`,
+      AlbumResponseSchema,
+    );
   }
 
   /**
    * Get artist details with tracks
    */
   async getArtist(artistId: string): Promise<ArtistResponse> {
-    return this.request(`/artist/${artistId}`, ArtistResponseSchema);
+    return this.request(
+      `/artist/${encodeURIComponent(artistId)}`,
+      ArtistResponseSchema,
+    );
+  }
+
+  /** Get an artist's albums, oldest first. */
+  async getArtistAlbums(artistId: string): Promise<ArtistAlbumsResponse> {
+    return this.request(
+      `/artist/${encodeURIComponent(artistId)}/albums`,
+      ArtistAlbumsResponseSchema,
+    );
   }
 
   /** Get playlist details with ordered tracks. */

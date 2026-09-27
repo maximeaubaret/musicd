@@ -425,3 +425,75 @@ describe("MusicDaemonClient playlists and favorites", () => {
     ]);
   });
 });
+
+describe("MusicDaemonClient seeking and artist albums", () => {
+  test("seeks within the current track", async () => {
+    const requests: Request[] = [];
+    const fetchMock = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+        requests.push(request);
+        const { position } = (await request.clone().json()) as {
+          position: number;
+        };
+        return Response.json({
+          success: true,
+          message: `Seeked to ${position}s`,
+          position,
+        });
+      },
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    expect(await client.seek(90)).toEqual({
+      success: true,
+      message: "Seeked to 90s",
+      position: 90,
+    });
+    expect(requests[0].method).toBe("POST");
+    expect(new URL(requests[0].url).pathname).toBe("/api/seek");
+  });
+
+  test("reads an artist's albums", async () => {
+    const requests: Request[] = [];
+    const fetchMock = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+        requests.push(request);
+        return Response.json({
+          success: true,
+          artist: { id: "artist 1", name: "Miles", type: "MusicArtist" },
+          albums: [
+            {
+              id: "album-1",
+              name: "Kind of Blue",
+              type: "MusicAlbum",
+              duration: 0,
+            },
+          ],
+          count: 1,
+        });
+      },
+    );
+    globalThis.fetch = Object.assign(fetchMock, {
+      preconnect: originalFetch.preconnect,
+    });
+    const client = new MusicDaemonClient("http://127.0.0.1:8765");
+
+    const result = await client.getArtistAlbums("artist 1");
+
+    expect(result.albums.map((album) => album.id)).toEqual(["album-1"]);
+    expect(new URL(requests[0].url).pathname).toBe(
+      "/api/artist/artist%201/albums",
+    );
+  });
+});
