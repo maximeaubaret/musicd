@@ -361,6 +361,17 @@ describe("CLI playback controls", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ position: 180 });
   });
 
+  test("a relative seek on a track of unknown length starts from the current position", async () => {
+    const unknownLength = {
+      MUSICD_CLI_TEST_SCENARIO: "unknown-length-playing",
+    };
+    const forward = await runCli(["--json", "seek", "+10"], unknownLength);
+    const back = await runCli(["--json", "seek", "-10"], unknownLength);
+
+    expect(JSON.parse(forward.stdout)).toMatchObject({ position: 130 });
+    expect(JSON.parse(back.stdout)).toMatchObject({ position: 110 });
+  });
+
   test("an absolute seek past the end of the track fails", async () => {
     const result = await runCli(["seek", "5:00"], playing);
 

@@ -1199,6 +1199,7 @@ describe("PlayerService seek", () => {
     await player.seek(5000);
 
     expect(backend.getPosition()).toBe(5000);
+    expect((await player.getStatus()).position).toBe(5000);
   });
 });
 

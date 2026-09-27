@@ -683,7 +683,8 @@ export class PlayerService {
             source: this.currentItem.source,
           }
         : null,
-      position: Math.min(position, duration),
+      // A zero duration means the length is unknown, so it cannot cap position.
+      position: duration > 0 ? Math.min(position, duration) : position,
       duration,
       queue: this.queue,
       queuePosition: this.queuePosition,

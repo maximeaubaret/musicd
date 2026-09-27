@@ -20,6 +20,7 @@ interface CliScenario {
   expectedQueueIds: string[];
   expectedQueuePosition: number;
   initialQueueMode?: QueueMode;
+  initialSeekPosition?: number;
 }
 
 const currentTrack: JellyfinItem = {
@@ -66,6 +67,13 @@ const youtubeQueueItem: QueueItem = {
   uploader: "Video Artist",
 };
 
+const unknownLengthQueueItem: QueueItem = {
+  ...youtubeQueueItem,
+  id: "live-id",
+  name: "Live Stream",
+  duration: 0,
+};
+
 const scenarios: Record<string, CliScenario> = {
   "stopped-empty-browse-queue": {
     initialQueue: [],
@@ -107,6 +115,15 @@ const scenarios: Record<string, CliScenario> = {
     expectedQueueIds: ["current-id", "track-id"],
     expectedQueuePosition: -1,
     initialQueueMode: { loop: true, random: false },
+  },
+  "unknown-length-playing": {
+    initialQueue: [unknownLengthQueueItem],
+    initiallyPlaying: true,
+    expectedState: "playing",
+    expectedCurrentItemId: "live-id",
+    expectedQueueIds: ["live-id"],
+    expectedQueuePosition: 0,
+    initialSeekPosition: 120,
   },
   "queue-interaction": {
     initialQueue: [currentQueueItem, youtubeQueueItem],
@@ -179,6 +196,9 @@ if (scenario.initialQueueMode) {
 }
 if (scenario.initiallyPlaying) {
   await player.playFromQueue(0);
+}
+if (scenario.initialSeekPosition !== undefined) {
+  await player.seek(scenario.initialSeekPosition);
 }
 
 const app = createApp({
