@@ -18,6 +18,12 @@ import select from "./select-with-quit";
 import { createDaemonClient } from "./daemon-connection";
 import { runSetup } from "./setup";
 import { logger } from "./logger";
+import {
+  applyAdjustment,
+  parseQueuePosition,
+  parseSeekPosition,
+  parseVolumeLevel,
+} from "./playback-input";
 
 import type {
   DaemonProtocol,
@@ -27,11 +33,15 @@ import type {
 } from "@musicd/shared";
 import type {
   FavoriteKind,
+  LibraryKind,
   PlaybackStatus,
+  PlayQueueResponse,
   QueueAddResponse,
   SearchResult,
   TrackInfo,
+  VolumeResponse,
 } from "@musicd/client";
+import type { PlaybackAdjustment } from "./playback-input";
 
 const program = new Command();
 
@@ -90,6 +100,27 @@ function parseFavoriteKind(value: string): FavoriteKind {
   throw new InvalidArgumentError(
     'Kind must be one of "albums", "artists", or "songs"',
   );
+}
+
+function parseLibraryKind(value: string): LibraryKind {
+  if (
+    value === "albums" ||
+    value === "artists" ||
+    value === "playlists" ||
+    value === "songs"
+  ) {
+    return value;
+  }
+  throw new InvalidArgumentError(
+    'Kind must be one of "albums", "artists", "playlists", or "songs"',
+  );
+}
+
+function parseOffset(value: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new InvalidArgumentError("Offset must be a non-negative integer");
+  }
+  return Number(value);
 }
 
 // Global options for daemon connection
@@ -756,6 +787,149 @@ favoritesCmd
     }
   });
 
+const LIBRARY_ICONS: Record<LibraryKind, string> = {
+  albums: "💿",
+  artists: "👤",
+  playlists: "📋",
+  songs: "🎵",
+};
+
+/** "1 album", "2 albums" — library kinds are the plural nouns. */
+function countOf(count: number, plural: string): string {
+  return `${count} ${count === 1 ? plural.slice(0, -1) : plural}`;
+}
+
+program
+  .command("library")
+  .alias("lib")
+  .description("Browse the Jellyfin music library")
+  .argument(
+    "[kind]",
+    "Library kind: albums, artists, playlists, or songs",
+    parseLibraryKind,
+    "albums",
+  )
+  .option("-l, --limit <number>", "Maximum items to show", parseSearchLimit, 20)
+  .option("-o, --offset <number>", "Items to skip, for paging", parseOffset, 0)
+  .action(async (kind: LibraryKind, options) => {
+    try {
+      const result = await getClient().browseLibrary(
+        kind,
+        options.offset,
+        options.limit,
+      );
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+
+      if (result.count === 0) {
+        const message =
+          result.total > 0
+            ? `No ${kind} past offset ${result.startIndex} (${result.total} total)`
+            : `No ${kind} found`;
+        console.log(chalk.yellow(message));
+        return;
+      }
+
+      const range =
+        result.count < result.total
+          ? ` (showing ${result.startIndex + 1}-${result.startIndex + result.count})`
+          : "";
+      console.log(chalk.gray(`${countOf(result.total, kind)}${range}\n`));
+      for (const item of result.items) {
+        const parts = [
+          LIBRARY_ICONS[kind],
+          chalk.bold.white(truncateTitle(item.name)),
+        ];
+        if (item.artist && kind !== "artists") {
+          parts.push(chalk.cyan(`by ${item.artist}`));
+        }
+        if (item.year) {
+          parts.push(chalk.gray(`(${item.year})`));
+        }
+        parts.push(chalk.dim(`[${item.id}]`));
+        console.log(parts.join(" "));
+      }
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to browse library:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("album")
+  .description("Show the tracks on a Jellyfin album")
+  .argument("<id>", "Jellyfin album ID")
+  .action(async (id: string) => {
+    try {
+      const result = await getClient().getAlbum(id);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+
+      const artist = result.album.artist
+        ? chalk.cyan(` · ${result.album.artist}`)
+        : "";
+      console.log(`${chalk.bold.white(result.album.name)}${artist}`);
+      console.log(chalk.gray(`${countOf(result.count, "tracks")}\n`));
+      for (const [index, track] of result.tracks.entries()) {
+        const duration =
+          track.duration > 0
+            ? chalk.gray(` · ${formatDuration(track.duration)}`)
+            : "";
+        console.log(
+          `${chalk.gray(`${index + 1}.`)} ${truncateTitle(track.name)}${duration} ${chalk.dim(`[${track.id}]`)}`,
+        );
+      }
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to show album:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("artist")
+  .description("Show a Jellyfin artist's albums")
+  .argument("<id>", "Jellyfin artist ID")
+  .action(async (id: string) => {
+    try {
+      const result = await getClient().getArtistAlbums(id);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+
+      console.log(chalk.bold.white(result.artist.name));
+      console.log(chalk.gray(`${countOf(result.count, "albums")}\n`));
+      for (const album of result.albums) {
+        const year = album.year ? chalk.gray(` (${album.year})`) : "";
+        console.log(
+          `💿 ${chalk.bold.white(truncateTitle(album.name))}${year} ${chalk.dim(`[${album.id}]`)}`,
+        );
+      }
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to show artist:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
 program
   .command("play")
   .alias("p")
@@ -818,6 +992,78 @@ program
       }
       console.error(
         "✗ Failed to stop:",
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("seek")
+  .description("Seek within the current track")
+  .argument(
+    "<position>",
+    "Seconds or [h:]m:ss; prefix with + or - to seek relative to now",
+    parseSeekPosition,
+  )
+  // Commander would otherwise read a relative seek like "-10" as an option.
+  .allowUnknownOption()
+  .action(async (target: PlaybackAdjustment) => {
+    try {
+      const client = getClient();
+      const current =
+        target.kind === "adjust" ? (await client.status()).position : 0;
+      const result = await client.seek(applyAdjustment(target, current));
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      console.log(
+        chalk.green(`⏩ Seeked to ${formatDuration(result.position)}`),
+      );
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to seek:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("volume")
+  .alias("vol")
+  .description("Show the playback volume, or set it")
+  .argument(
+    "[level]",
+    "Level 0-100; prefix with + or - to adjust the current level",
+    parseVolumeLevel,
+  )
+  // Commander would otherwise read a decrease like "-10" as an option.
+  .allowUnknownOption()
+  .action(async (level: PlaybackAdjustment | undefined) => {
+    try {
+      const client = getClient();
+      let result: VolumeResponse;
+      if (level === undefined) {
+        result = await client.getVolume();
+      } else {
+        const current =
+          level.kind === "adjust" ? (await client.getVolume()).volume : 0;
+        result = await client.setVolume(applyAdjustment(level, current, 100));
+      }
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      console.log(`🔊 Volume: ${Math.round(result.volume)}%`);
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Volume error:"),
         error instanceof Error ? error.message : error,
       );
       process.exit(1);
@@ -1015,6 +1261,15 @@ program
     }
   });
 
+function printQueuePlay(result: PlayQueueResponse): void {
+  if (result.item) {
+    console.log(chalk.green("▶ Playing:"), chalk.bold(result.item.name));
+  }
+  console.log(
+    chalk.gray(`  Queue: ${result.position + 1}/${result.queueLength}`),
+  );
+}
+
 /** Render the queue and play the item selected by the user. */
 async function showQueue(): Promise<void> {
   try {
@@ -1061,18 +1316,7 @@ async function showQueue(): Promise<void> {
     }
 
     try {
-      const playResult = await getClient().playFromQueue(selectedIndex);
-      if (playResult.item) {
-        console.log(
-          chalk.green("▶ Playing:"),
-          chalk.bold(playResult.item.name),
-        );
-      }
-      console.log(
-        chalk.gray(
-          `  Queue: ${playResult.position + 1}/${playResult.queueLength}`,
-        ),
-      );
+      printQueuePlay(await getClient().playFromQueue(selectedIndex));
     } catch (error) {
       console.error(
         chalk.red("✗ Failed to play:"),
@@ -1211,6 +1455,56 @@ queueCmd
       }
       console.error(
         chalk.red("✗ Failed to shuffle queue:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+queueCmd
+  .command("play")
+  .description("Play the track at a queue position")
+  .argument("<position>", "Position as numbered by `queue`", parseQueuePosition)
+  .action(async (index: number) => {
+    try {
+      const result = await getClient().playFromQueue(index);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      printQueuePlay(result);
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to play:"),
+        error instanceof Error ? error.message : error,
+      );
+      process.exit(1);
+    }
+  });
+
+queueCmd
+  .command("remove")
+  .alias("rm")
+  .description("Remove the track at a queue position")
+  .argument("<position>", "Position as numbered by `queue`", parseQueuePosition)
+  .action(async (index: number) => {
+    try {
+      const result = await getClient().removeFromQueue(index);
+      if (isJsonMode()) {
+        outputJson(result);
+      }
+      console.log(
+        chalk.green(`✓ Removed track ${index + 1} from queue`),
+        chalk.gray(`(${countOf(result.queue.length, "tracks")} left)`),
+      );
+    } catch (error) {
+      if (isJsonMode()) {
+        outputJsonError(error);
+      }
+      console.error(
+        chalk.red("✗ Failed to remove from queue:"),
         error instanceof Error ? error.message : error,
       );
       process.exit(1);

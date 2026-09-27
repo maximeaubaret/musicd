@@ -40,6 +40,20 @@ const selectedTrack: JellyfinItem = {
   RunTimeTicks: 1_800_000_000,
 };
 
+const testAlbum: JellyfinItem = {
+  Id: "album-id",
+  Name: "Test Album",
+  Type: "MusicAlbum",
+  AlbumArtist: "Test Artist",
+  ProductionYear: 1999,
+};
+
+const testArtist: JellyfinItem = {
+  Id: "artist-id",
+  Name: "Test Artist",
+  Type: "MusicArtist",
+};
+
 const [currentQueueItem] = createJellyfinQueueItems([currentTrack]);
 const youtubeQueueItem: QueueItem = {
   id: "youtube-id",
@@ -117,6 +131,8 @@ const scenario = getScenario(process.env.MUSICD_CLI_TEST_SCENARIO);
 const itemsById: Record<string, JellyfinItem> = {
   [currentTrack.Id]: currentTrack,
   [selectedTrack.Id]: selectedTrack,
+  [testAlbum.Id]: testAlbum,
+  [testArtist.Id]: testArtist,
 };
 
 function failIfCalled(): never {
@@ -125,10 +141,13 @@ function failIfCalled(): never {
 
 const jellyfinService: ApiJellyfinService = {
   authenticate: failIfCalled,
-  browse: failIfCalled,
+  browse: async (kind, startIndex = 0) =>
+    kind === "albums"
+      ? { items: [testAlbum].slice(startIndex), total: 1 }
+      : { items: [], total: 0 },
   browseFavorites: failIfCalled,
-  getAlbumTracks: failIfCalled,
-  getArtistAlbums: failIfCalled,
+  getAlbumTracks: async () => [currentTrack, selectedTrack],
+  getArtistAlbums: async () => [testAlbum],
   getArtistTracks: failIfCalled,
   getArtwork: failIfCalled,
   getItem: async (id) => {

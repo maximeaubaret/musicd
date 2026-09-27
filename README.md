@@ -120,6 +120,22 @@ Global connection options may appear before the command.
 | `next`              | `n`    | Advance according to the current queue mode                |
 | `previous`          | `prev` | Go to the previous queue item                              |
 | `status`            | `s`    | Show playback, queue position, and enabled queue modes     |
+| `seek <position>`   | -      | Seek to seconds or `[h:]m:ss`; `+N`/`-N` seek relative     |
+| `volume [level]`    | `vol`  | Show the volume, or set it 0-100; `+N`/`-N` adjust it      |
+
+`seek -10` and `volume -5` are read as relative values, not as options.
+
+### Library
+
+| Command                    | Alias | Behavior                                                 |
+| -------------------------- | ----- | -------------------------------------------------------- |
+| `library [kind]`           | `lib` | List `albums` (default), `artists`, `playlists`, `songs` |
+| `library -l <n> -o <skip>` | -     | Page through the library                                 |
+| `album <id>`               | -     | Show an album's tracks                                   |
+| `artist <id>`              | -     | Show an artist's albums, oldest first                    |
+
+Listings include each item's ID, which `queue add --id` and `favorites add`
+accept.
 
 ### Jellyfin playlists and favorites
 
@@ -155,6 +171,8 @@ setup, so they are visible in other Jellyfin clients as well.
 | `queue loop [on\|off]`          | -     | Set loop explicitly; omit the state to toggle            |
 | `queue random [on\|off]`        | -     | Set random explicitly; omit the state to toggle          |
 | `queue shuffle`                 | -     | Reorder the queue while preserving the active track      |
+| `queue play <position>`         | -     | Play the track at a position numbered by `queue`         |
+| `queue remove <position>`       | `rm`  | Remove the track at a position numbered by `queue`       |
 
 CLI `queue add` never clears the existing queue, starts playback, or replaces the
 current track. Jellyfin album, artist, and playlist IDs expand to their playable

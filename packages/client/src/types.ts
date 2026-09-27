@@ -149,6 +149,17 @@ export interface ArtistResponse {
   count: number;
 }
 
+export interface ArtistAlbumsResponse {
+  success: boolean;
+  artist: {
+    id: string;
+    name: string;
+    type: string;
+  };
+  albums: LibraryItem[];
+  count: number;
+}
+
 export interface PlaylistResponse {
   success: boolean;
   playlist: {
@@ -203,6 +214,13 @@ export interface QueueModeResponse {
 export interface QueueModeStatusResponse {
   success: boolean;
   queueMode: QueueMode;
+}
+
+/** Response from POST /seek */
+export interface SeekResponse {
+  success: boolean;
+  message: string;
+  position: number;
 }
 
 export interface VolumeResponse {
