@@ -354,6 +354,44 @@ describe("CLI playback controls", () => {
     expect(JSON.parse(back.stdout)).toMatchObject({ position: 0 });
   });
 
+  test("a relative seek stops at the end of the track", async () => {
+    const result = await runCli(["--json", "seek", "+10:00"], playing);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ position: 180 });
+  });
+
+  test("an absolute seek past the end of the track fails", async () => {
+    const result = await runCli(["seek", "5:00"], playing);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Position 300s is past the end of the track (180s)",
+    );
+  });
+
+  test("seek and volume report mistyped options as unknown options", async () => {
+    for (const args of [
+      ["seek", "--fast"],
+      ["seek", "10", "--fast"],
+      ["seek", "-10", "--fast"],
+      ["volume", "--fast"],
+      ["vol", "+5", "--fast"],
+    ]) {
+      const result = await runCli(args, playing);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("error: unknown option '--fast'");
+    }
+  });
+
+  test("global options still apply after a relative value", async () => {
+    const result = await runCli(["seek", "-10", "--json"], playing);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ position: 0 });
+  });
+
   test("seek rejects malformed positions before contacting the daemon", async () => {
     const result = await runCli(["seek", "1:75"], playing);
 

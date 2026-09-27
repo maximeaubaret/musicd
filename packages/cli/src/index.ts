@@ -123,6 +123,37 @@ function parseOffset(value: string): number {
   return Number(value);
 }
 
+/** An option-like token that is not a signed number or time such as "-10". */
+function isStrayOption(token: string): boolean {
+  return token.length > 1 && token.startsWith("-") && !/^-\d/.test(token);
+}
+
+function rejectStrayOption(token: string): void {
+  if (isStrayOption(token)) {
+    program.error(`error: unknown option '${token}'`, {
+      code: "commander.unknownOption",
+    });
+  }
+}
+
+/*
+ * Commander reads a signed argument such as "-10" as an unknown option, so
+ * commands taking one must allow unknown options and receive them as
+ * arguments. These two helpers put back Commander's error for genuinely
+ * mistyped options: signedArgument checks the argument itself, before it is
+ * parsed, and rejectStrayArguments checks anything after it.
+ */
+function signedArgument<T>(parse: (value: string) => T): (value: string) => T {
+  return (value) => {
+    rejectStrayOption(value);
+    return parse(value);
+  };
+}
+
+function rejectStrayArguments(_program: Command, actionCommand: Command): void {
+  actionCommand.args.forEach(rejectStrayOption);
+}
+
 // Global options for daemon connection
 program
   .option("--print-logs", "Enable debug logging")
@@ -1004,16 +1035,23 @@ program
   .argument(
     "<position>",
     "Seconds or [h:]m:ss; prefix with + or - to seek relative to now",
-    parseSeekPosition,
+    signedArgument(parseSeekPosition),
   )
-  // Commander would otherwise read a relative seek like "-10" as an option.
   .allowUnknownOption()
+  .hook("preAction", rejectStrayArguments)
   .action(async (target: PlaybackAdjustment) => {
     try {
       const client = getClient();
-      const current =
-        target.kind === "adjust" ? (await client.status()).position : 0;
-      const result = await client.seek(applyAdjustment(target, current));
+      let position: number;
+      if (target.kind === "adjust") {
+        const status = await client.status();
+        // A zero duration means the length is unknown, so only 0 bounds it.
+        const end = status.duration > 0 ? status.duration : Infinity;
+        position = applyAdjustment(target, status.position, end);
+      } else {
+        position = target.value;
+      }
+      const result = await client.seek(position);
       if (isJsonMode()) {
         outputJson(result);
       }
@@ -1039,10 +1077,10 @@ program
   .argument(
     "[level]",
     "Level 0-100; prefix with + or - to adjust the current level",
-    parseVolumeLevel,
+    signedArgument(parseVolumeLevel),
   )
-  // Commander would otherwise read a decrease like "-10" as an option.
   .allowUnknownOption()
+  .hook("preAction", rejectStrayArguments)
   .action(async (level: PlaybackAdjustment | undefined) => {
     try {
       const client = getClient();

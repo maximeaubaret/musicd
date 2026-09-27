@@ -123,7 +123,9 @@ Global connection options may appear before the command.
 | `seek <position>`   | -      | Seek to seconds or `[h:]m:ss`; `+N`/`-N` seek relative     |
 | `volume [level]`    | `vol`  | Show the volume, or set it 0-100; `+N`/`-N` adjust it      |
 
-`seek -10` and `volume -5` are read as relative values, not as options.
+`seek -10` and `volume -5` are read as relative values, not as options. A
+relative seek stops at the start or end of the track; an absolute position past
+the end is rejected.
 
 ### Library
 

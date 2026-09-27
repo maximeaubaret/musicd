@@ -1179,6 +1179,27 @@ describe("PlayerService seek", () => {
 
     await expect(player.seek(10)).rejects.toThrow("Nothing is playing");
   });
+
+  test("rejects positions past the end of the current track", async () => {
+    addJellyfinItems(player, createMockQueue(1));
+    await player.playFromQueue(0);
+
+    await expect(player.seek(181)).rejects.toThrow(
+      "Position 181s is past the end of the track (180s)",
+    );
+    expect(backend.getPosition()).toBe(0);
+  });
+
+  test("allows any position when the track length is unknown", async () => {
+    addJellyfinItems(player, [
+      { ...createMockItem("live", "Live Set"), RunTimeTicks: undefined },
+    ]);
+    await player.playFromQueue(0);
+
+    await player.seek(5000);
+
+    expect(backend.getPosition()).toBe(5000);
+  });
 });
 
 describe("PlayerService native backend seek", () => {
